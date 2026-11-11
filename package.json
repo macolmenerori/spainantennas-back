@@ -1,0 +1,46 @@
+{
+  "name": "spainantennas-back",
+  "version": "1.0.0",
+  "description": "Backend of spainantennas project",
+  "main": "dist/server.js",
+  "author": "macolmenerori",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/macolmenerori/spainantennas-back.git"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "packageManager": "pnpm@12.18.0",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "nodemon --exec tsx src/server.ts",
+    "lint": "eslint --fix .",
+    "prettify": "prettier -w --log-level=silent .",
+    "types": "tsc --noEmit",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "verify": "pnpm audit --prod && pnpm lint && pnpm prettify && pnpm types && pnpm build"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.18.0",
+      "onFail": "download"
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.6",
+    "eslint": "^10.14.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.7",
+    "eslint-plugin-simple-import-sort": "^14.0.0",
+    "nodemon": "^3.1.14",
+    "prettier": "^3.9.10",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.2"
+  }
+}

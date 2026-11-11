@@ -1,0 +1,8 @@
+data/
+dist/
+node_modules/
+.dccache
+.vscode/
+
+description.md
+config.env
