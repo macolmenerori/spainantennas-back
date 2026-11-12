@@ -21,7 +21,9 @@
     "prettify": "prettier -w --log-level=silent .",
     "types": "tsc --noEmit",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "verify": "pnpm audit --prod && pnpm lint && pnpm prettify && pnpm types && pnpm build"
+    "verify": "pnpm audit --prod && pnpm lint && pnpm prettify && pnpm types && pnpm build",
+    "generate:openapi": "ts-node scripts/generateOpenapi.ts",
+    "generate:openapi:json": "ts-node scripts/generateOpenapi.ts --json"
   },
   "devEngines": {
     "packageManager": {
@@ -35,12 +37,14 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.6",
+    "@types/swagger-jsdoc": "^6.0.4",
     "eslint": "^10.14.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.7",
     "eslint-plugin-simple-import-sort": "^14.0.0",
     "nodemon": "^3.1.14",
     "prettier": "^3.9.10",
+    "ts-node": "^10.9.2",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.2"
@@ -48,6 +52,9 @@
   "dependencies": {
     "cors": "^2.8.6",
     "dotenv": "^18.0.10",
-    "express": "^5.3.0"
+    "express": "^5.3.0",
+    "mongoose": "^9.12.1",
+    "swagger-jsdoc": "^6.3.0",
+    "yaml": "^2.9.1"
   }
 }

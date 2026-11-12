@@ -1,2 +1,8 @@
 allowBuilds:
   esbuild: false
+
+minimumReleaseAgeExclude:
+  - glob@14.0.5
+
+overrides:
+  'glob': '14.0.5'
