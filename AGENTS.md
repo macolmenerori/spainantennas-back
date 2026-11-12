@@ -35,8 +35,14 @@ Express + TypeScript API over MongoDB (Mongoose) serving radio/TV antenna sites 
 
 One `placements` collection. Transmitters are **embedded subdocuments with their own Mongoose `_id`**. Schema follows `data/README.md` (read `data/AGENTS.md` for data conventions):
 
-- Placement: `status` enum `active|inactive|unknown`; `siteOperator` string (`"unknown"` allowed); `location {lat, lon, altM}` (lat/lon required and range-checked, `altM` nullable); `postcode` nullable string; `transmitters` default `[]` (empty allowed); `lastUpdate` Date; `source` string.
-- Transmitter: `type` enum `TV|radio`; `technology` enum `AM-LW|AM-MW|FM|TDT|DAB+`; `frequencykHz` nullable number (kHz, FM too); `stationName`, `broadcaster`, `source` required strings; `powerKw` nullable number.
+- Model `src/models/spainantennasModel.ts` (default export `PlacementModel`), types and enum/bounds constants (`PLACEMENT_STATUSES`, `TRANSMITTER_TYPES`, `TRANSMITTER_TECHNOLOGIES`, `SPAIN_BOUNDS`) in `src/models/spainantennasTypes.ts`. Reuse those constants in validations; never repeat the values.
+- Placement: `status` enum `active|inactive|unknown`; `siteOperator` string (`"unknown"` allowed); `location {lat, lon, altM}` (sub-schema, no `_id`); `postcode` nullable 5-digit string; `transmitters` default `[]` (empty allowed); `lastUpdate` Date (required, default now); `source` string.
+- Location: `lat`/`lon` nullable **as a pair** (both set or both null; 1,109 TV sites have no coordinates yet, the front must skip them). When set, range-checked to the Spain box: lat 27-44, lon -19-5. `altM` nullable, unbounded (data has -1).
+- Transmitter: `type` enum `TV|radio`; `technology` enum `AM-LW|AM-MW|FM|TDT|DAB+`; `frequencykHz` nullable number > 0 (kHz, FM too); `stationName`, `broadcaster`, `source` required non-empty strings; `powerKw` nullable number >= 0.
+- Nullable fields (`lat`, `lon`, `altM`, `postcode`, `frequencykHz`, `powerKw`) are not required and default to `null`, so every document has every key. Strings are trimmed.
+- Schema options on all three schemas: `versionKey: false` (no `__v`), `strict: 'throw'` (unknown keys fail). An unknown root key throws `StrictModeError` from the constructor; an unknown transmitter key surfaces as a cast `ValidationError`. Import must catch both per item.
+- No Mongoose `timestamps`. Indexes: `status`, `postcode`, `{transmitters.technology, transmitters.type}`. Accent-insensitive text filters are built at query time (accent-class regex), not stored.
+- The lat/lon pair validator runs on document validation (`save`, `validate`, `insertMany`), not on `findOneAndUpdate`. Updates must load, set, then `save()`. `validateSync()` is deprecated in Mongoose 9; use `validate()`.
 - `stationName` is NOT unique within a placement (TV repeats channels across multiplexes). Always address a transmitter by its `_id`.
 - `lastUpdate` is stamped by the server (now) on any placement or transmitter create/update/delete; client value ignored. Import keeps the file's `lastUpdate`.
 
