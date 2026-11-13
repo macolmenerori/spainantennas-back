@@ -12,7 +12,7 @@ Express + TypeScript API over MongoDB (Mongoose) serving radio/TV antenna sites 
 - Single `tsconfig.json`: `module: nodenext` (emits CJS because package.json has no `"type": "module"`), `target: es2025` (`RegExp.escape` available), `isolatedModules`, `noImplicitOverride`, `noFallthroughCasesInSwitch`. No `verbatimModuleSyntax` (rejects `import` in CJS-mode files). No source maps. No path alias yet (tsc doesn't rewrite `@/` imports; use relative imports).
 - Tests are co-located as `src/**/*.test.ts` and excluded from `tsconfig.json`, so `tsc` never emits them (and `pnpm types` doesn't check them; neither does it check `scripts/`).
 - `pnpm-workspace.yaml` `allowBuilds` lists packages allowed (or explicitly denied) to run install scripts; esbuild (via tsx) is denied, its binary works without it.
-- Express 5, Mongoose, express-validator, helmet, cors (origin whitelist), express-rate-limit on `/api`, `@exortek/express-mongo-sanitize`, compression, multer (import upload).
+- Express 5, Mongoose, express-validator, helmet, cors (origin whitelist), express-rate-limit on `/api`, `@exortek/express-mongo-sanitize`, compression, multer (import upload). Wired so far: cors, `express.json({ limit: '1mb' })`, express-validator; the rest is still to add.
 - `dotenv` loads `config.env` (gitignored); keep `config.env.example` (committed) updated. `checkEnvVars()` exits on missing vars (and on a non-positive-integer `AUTH_TIMEOUT_MS`).
 - ESLint (flat config, typescript-eslint, prettier, simple-import-sort) + Prettier.
 - Vitest, unit tests only (mock Mongoose models and `fetch`; no real DB). `vitest.config.mts` (`.mts` because the package is CJS) restores mocks, stubbed globals and envs after each test. In tests that import Express's `Response` type, build fetch responses with `new globalThis.Response(...)`.
@@ -29,7 +29,7 @@ Express + TypeScript API over MongoDB (Mongoose) serving radio/TV antenna sites 
 
 ## Structure
 
-`src/server.ts` (dotenv, env check, Mongo connect, listen) · `src/app.ts` (middleware, `/healthcheck`, routers, 404) · `src/routes/` · `src/controllers/` (incl. `authController.ts` with `protect`) · `src/models/` (schema + types) · `src/validations/` · `src/utils/` (`catchAsync`, `methodNotAllowed`, `checkEnvVars`, pagination, filter builders).
+`src/server.ts` (dotenv, env check, Mongo connect, listen) · `src/app.ts` (middleware, `/healthcheck`, routers, 404, `errorHandler` last) · `src/routes/spainantennasRouter.ts` (one router for every resource, mounted at `/api/v1`, holds the `@openapi` components) · `src/controllers/` (`spainantennasController.ts`, `authController.ts` with `protect`) · `src/models/` (schema + types) · `src/validations/spainantennas.validations.ts` (all chains) · `src/utils/` (`catchAsync`, `methodNotAllowed`, `checkEnvVars`, `errorHandler`, pagination, filter builders).
 
 ## Data model
 
@@ -39,6 +39,7 @@ One `placements` collection. Transmitters are **embedded subdocuments with their
 - Placement: `status` enum `active|inactive|unknown`; `siteOperator` string (`"unknown"` allowed); `location {lat, lon, altM}` (sub-schema, no `_id`); `postcode` nullable 5-digit string; `transmitters` default `[]` (empty allowed); `lastUpdate` Date (required, default now); `source` string.
 - Location: `lat`/`lon` nullable **as a pair** (both set or both null; 1,109 TV sites have no coordinates yet, the front must skip them). When set, range-checked to the Spain box: lat 27-44, lon -19-5. `altM` nullable, unbounded (data has -1).
 - Transmitter: `type` enum `TV|radio`; `technology` enum `AM-LW|AM-MW|FM|TDT|DAB+`; `frequencykHz` nullable number > 0 (kHz, FM too); `stationName`, `broadcaster`, `source` required non-empty strings; `powerKw` nullable number >= 0.
+- Max lengths (schema `maxlength` and validators): `MAX_NAME_LENGTH` 200 for `siteOperator`, `stationName`, `broadcaster`; `MAX_SOURCE_LENGTH` 5000 for both `source` fields (longest in the data: 86 and 1754). Postcode pattern is `POSTCODE_REGEX`. All in `spainantennasTypes.ts`.
 - Nullable fields (`lat`, `lon`, `altM`, `postcode`, `frequencykHz`, `powerKw`) are not required and default to `null`, so every document has every key. Strings are trimmed.
 - Schema options on all three schemas: `versionKey: false` (no `__v`), `strict: 'throw'` (unknown keys fail). An unknown root key throws `StrictModeError` from the constructor; an unknown transmitter key surfaces as a cast `ValidationError`. Import must catch both per item.
 - No Mongoose `timestamps`. Indexes: `status`, `postcode`, `{transmitters.technology, transmitters.type}`. Accent-insensitive text filters are built at query time (accent-class regex), not stored.
@@ -79,7 +80,9 @@ Responses:
 
 - List: `{ status: "success", page, perPage, totalPages, total, results: [...] }`
 - Single: `{ status: "success", data: { placement | transmitter } }`
-- Error: `{ status: "fail" | "error", message, errors? }` (400 validation, 401 auth, 404, 405, 500, 503 auth service unavailable)
+- Error: `{ status: "fail" | "error", message, errors? }` (400 validation or malformed JSON, 401 auth, 404, 405, 413 body over 1 MB, 500, 503 auth service unavailable). 4xx use `fail`, 5xx use `error` (`catchAsync` and `errorHandler` included).
+- Validation 400: `{ status: "fail", message: "Invalid input data", errors }`, `errors` from `validationResult().array()`. A Mongoose `ValidationError` on save is mapped to the same shape (`type`, `msg`, `path`, `location`).
+- Create: 201 with the single shape.
 
 Import: run the API locally against the target DB for the big `data/*.json` files (Heroku has a 30 s request limit and 512 MB RAM). Size limit `IMPORT_MAX_SIZE_MB`; global `express.json` limit stays small. Validate each item with the Mongoose schema, `insertMany` in batches with `ordered: false`, ignore incoming `_id`s, respond `{ inserted, failed, errors: [{ index, message }] }`. No duplicate detection.
 
@@ -88,6 +91,14 @@ Export: stream a JSON array from a Mongoose cursor as an attachment, same shape 
 ## Validation
 
 express-validator chains in `src/validations/` for path params (`isMongoId`), query params, pagination and bodies; controller short-circuits with 400. Mongoose schema is the final guard and validates import items. Controllers build documents explicitly; never forward raw `req.body`.
+
+Body rules:
+
+- Strict JSON types, no coercion: numbers must be JSON numbers (`"40.4"` -> 400), strings must be strings, `location` a plain object, `transmitters` an array.
+- Unknown keys are rejected at every level (root, `location`, each transmitter) by the custom `onlyKeys` check. Not `checkExact()`: it treats a validated parent (`location`, `transmitters.*`) as covering all its children, so nested unknown keys would pass.
+- `_id` is never accepted in a body (root or transmitter): ids live in the path. `lastUpdate` is accepted and ignored.
+- Nullable fields may be omitted or `null` (`optional({ values: 'null' })`); the controller stores `null`. `transmitters` may be omitted (stored `[]`) but not `null`. `location` is required; `{}` is valid (no coordinates).
+- Required strings are trimmed, non-empty and length-capped. The validators also enforce the lat/lon pair rule and `SPAIN_BOUNDS`, so clients get field paths instead of a Mongoose error.
 
 ## Environment variables
 

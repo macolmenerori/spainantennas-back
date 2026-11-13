@@ -26,7 +26,7 @@ const catchAsync =
       // but we'll keep this for explicit error handling and logging
       console.error('Async error caught:', e);
       return res.status(500).json({
-        status: 'fail',
+        status: 'error',
         message: 'Internal server error'
       });
     });

@@ -12,6 +12,14 @@ export const SPAIN_BOUNDS = {
   lonMax: 5
 } as const;
 
+// Max length of name-like strings: siteOperator, stationName, broadcaster
+export const MAX_NAME_LENGTH = 200;
+// Max length of the free-text source fields (placement and transmitter)
+export const MAX_SOURCE_LENGTH = 5000;
+
+// Spanish postcode: exactly 5 digits
+export const POSTCODE_REGEX = /^\d{5}$/;
+
 export type PlacementStatus = (typeof PLACEMENT_STATUSES)[number];
 export type TransmitterType = (typeof TRANSMITTER_TYPES)[number];
 export type TransmitterTechnology = (typeof TRANSMITTER_TECHNOLOGIES)[number];

@@ -1,6 +1,9 @@
 import cors from 'cors';
 import express, { Request, Response } from 'express';
 
+import spainantennasRouter from './routes/spainantennasRouter';
+import errorHandler from './utils/errorHandler';
+
 const app = express();
 
 const cors_whitelist = process.env.CORS_WHITELIST ? process.env.CORS_WHITELIST.split(',') : [];
@@ -25,6 +28,9 @@ app.use(cors(corsOptions));
 // Handle preflight requests for complex requests (e.g., with credentials)
 app.options('/*splat', cors(corsOptions));
 
+// Parse JSON bodies, rejecting bodies bigger than 1 megabyte
+app.use(express.json({ limit: '1mb' }));
+
 // Healthcheck
 app.get('/healthcheck', (req, res) => {
   res.status(200).json({
@@ -33,6 +39,8 @@ app.get('/healthcheck', (req, res) => {
   });
 });
 
+app.use('/api/v1', spainantennasRouter);
+
 // Middleware for handling unhandled routes
 app.use((req: Request, res: Response) => {
   res.status(404).json({
@@ -40,5 +48,8 @@ app.use((req: Request, res: Response) => {
     message: `Can't find ${req.originalUrl} on this server`
   });
 });
+
+// JSON responses for body parse errors and anything unhandled
+app.use(errorHandler);
 
 export default app;

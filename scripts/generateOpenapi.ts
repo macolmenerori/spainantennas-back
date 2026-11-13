@@ -18,7 +18,7 @@ const options: swaggerJsdoc.Options = {
     },
     servers: [
       {
-        url: '/api/v1/spainantennas',
+        url: '/api/v1',
         description: 'API base path'
       }
     ]

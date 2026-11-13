@@ -1,0 +1,312 @@
+import express from 'express';
+
+import { protect } from '../controllers/authController';
+import { createPlacement } from '../controllers/spainantennasController';
+import { methodNotAllowed } from '../utils/methodNotAllowed';
+import { createPlacementValidation } from '../validations/spainantennas.validations';
+
+/**
+ * @openapi
+ * components:
+ *   securitySchemes:
+ *     bearerAuth:
+ *       type: http
+ *       scheme: bearer
+ *       bearerFormat: JWT
+ *       description: JWT token obtained from the opensesame authentication service
+ *   schemas:
+ *     Location:
+ *       type: object
+ *       description: >
+ *         Site coordinates. lat and lon are both set or both null (site not placed on the
+ *         map yet). When set, they must be inside the Spain bounding box.
+ *       properties:
+ *         lat:
+ *           type: number
+ *           nullable: true
+ *           minimum: 27
+ *           maximum: 44
+ *           example: 40.4168
+ *         lon:
+ *           type: number
+ *           nullable: true
+ *           minimum: -19
+ *           maximum: 5
+ *           example: -3.7038
+ *         altM:
+ *           type: number
+ *           nullable: true
+ *           description: Altitude in meters
+ *           example: 657
+ *     TransmitterInput:
+ *       type: object
+ *       additionalProperties: false
+ *       required:
+ *         - type
+ *         - technology
+ *         - stationName
+ *         - broadcaster
+ *         - source
+ *       properties:
+ *         type:
+ *           type: string
+ *           enum: [TV, radio]
+ *           example: radio
+ *         technology:
+ *           type: string
+ *           enum: [AM-LW, AM-MW, FM, TDT, DAB+]
+ *           example: FM
+ *         frequencykHz:
+ *           type: number
+ *           nullable: true
+ *           exclusiveMinimum: true
+ *           minimum: 0
+ *           description: Frequency in kHz (FM too). Omitted means null.
+ *           example: 88200
+ *         stationName:
+ *           type: string
+ *           maxLength: 200
+ *           example: Radio Nacional
+ *         broadcaster:
+ *           type: string
+ *           maxLength: 200
+ *           example: RTVE
+ *         powerKw:
+ *           type: number
+ *           nullable: true
+ *           minimum: 0
+ *           description: Power in kW. Omitted means null.
+ *           example: 10
+ *         source:
+ *           type: string
+ *           maxLength: 5000
+ *           example: Ministry FM list
+ *     Transmitter:
+ *       allOf:
+ *         - type: object
+ *           properties:
+ *             _id:
+ *               type: string
+ *               description: MongoDB ObjectId
+ *               example: "507f1f77bcf86cd799439012"
+ *         - $ref: '#/components/schemas/TransmitterInput'
+ *     PlacementInput:
+ *       type: object
+ *       additionalProperties: false
+ *       description: >
+ *         Unknown keys (and any _id) are rejected. lastUpdate is accepted but ignored: the
+ *         server stamps it.
+ *       required:
+ *         - status
+ *         - siteOperator
+ *         - location
+ *         - source
+ *       properties:
+ *         status:
+ *           type: string
+ *           enum: [active, inactive, unknown]
+ *           example: active
+ *         siteOperator:
+ *           type: string
+ *           maxLength: 200
+ *           description: Use "unknown" if not known
+ *           example: Cellnex
+ *         location:
+ *           $ref: '#/components/schemas/Location'
+ *         postcode:
+ *           type: string
+ *           nullable: true
+ *           pattern: '^\d{5}$'
+ *           description: Omitted means null
+ *           example: "28001"
+ *         transmitters:
+ *           type: array
+ *           description: Omitted means empty
+ *           items:
+ *             $ref: '#/components/schemas/TransmitterInput'
+ *         lastUpdate:
+ *           type: string
+ *           format: date-time
+ *           description: Ignored
+ *         source:
+ *           type: string
+ *           maxLength: 5000
+ *           example: Ministry station data
+ *     Placement:
+ *       type: object
+ *       properties:
+ *         _id:
+ *           type: string
+ *           description: MongoDB ObjectId
+ *           example: "507f1f77bcf86cd799439011"
+ *         status:
+ *           type: string
+ *           enum: [active, inactive, unknown]
+ *         siteOperator:
+ *           type: string
+ *         location:
+ *           $ref: '#/components/schemas/Location'
+ *         postcode:
+ *           type: string
+ *           nullable: true
+ *         transmitters:
+ *           type: array
+ *           items:
+ *             $ref: '#/components/schemas/Transmitter'
+ *         lastUpdate:
+ *           type: string
+ *           format: date-time
+ *           description: Set by the server on every change
+ *         source:
+ *           type: string
+ *     ErrorResponse:
+ *       type: object
+ *       properties:
+ *         status:
+ *           type: string
+ *           enum: [fail, error]
+ *           example: fail
+ *         message:
+ *           type: string
+ *           example: Error message
+ *     ValidationErrorResponse:
+ *       type: object
+ *       properties:
+ *         status:
+ *           type: string
+ *           example: fail
+ *         message:
+ *           type: string
+ *           example: Invalid input data
+ *         errors:
+ *           type: array
+ *           items:
+ *             type: object
+ *             properties:
+ *               type:
+ *                 type: string
+ *                 example: field
+ *               value:
+ *                 description: The offending value (absent on schema errors)
+ *               msg:
+ *                 type: string
+ *                 example: Specific validation error message
+ *               path:
+ *                 type: string
+ *                 example: location.lat
+ *               location:
+ *                 type: string
+ *                 example: body
+ */
+
+const router = express.Router();
+
+/**
+ * @openapi
+ * /placement:
+ *   post:
+ *     summary: Create a placement
+ *     description: >
+ *       Creates a placement with optional transmitters. Nullable fields may be omitted (stored
+ *       as null). Numbers must be JSON numbers. lastUpdate is set by the server.
+ *     tags:
+ *       - Placement
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/PlacementInput'
+ *           example:
+ *             status: active
+ *             siteOperator: Cellnex
+ *             location:
+ *               lat: 40.4168
+ *               lon: -3.7038
+ *               altM: 657
+ *             postcode: "28001"
+ *             transmitters:
+ *               - type: radio
+ *                 technology: FM
+ *                 frequencykHz: 88200
+ *                 stationName: Radio Nacional
+ *                 broadcaster: RTVE
+ *                 powerKw: 10
+ *                 source: Ministry FM list
+ *             source: Ministry station data
+ *     responses:
+ *       201:
+ *         description: Placement created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     placement:
+ *                       $ref: '#/components/schemas/Placement'
+ *       400:
+ *         description: Validation error or malformed JSON body
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationErrorResponse'
+ *             example:
+ *               status: fail
+ *               message: Invalid input data
+ *               errors:
+ *                 - type: field
+ *                   value: 50
+ *                   msg: lat must be between 27 and 44
+ *                   path: location.lat
+ *                   location: body
+ *       401:
+ *         description: Missing, malformed or rejected token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: fail
+ *               message: You are not logged in! Please log in to get access.
+ *       413:
+ *         description: Body larger than 1 MB
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: fail
+ *               message: Request body too large
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: error
+ *               message: Internal server error
+ *       503:
+ *         description: Authentication service unavailable
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: error
+ *               message: Authentication service unavailable
+ */
+router
+  .route('/placement')
+  .post(protect, createPlacementValidation, createPlacement)
+  .all(methodNotAllowed(['POST']));
+
+export default router;

@@ -2,8 +2,11 @@ import mongoose, { Schema } from 'mongoose';
 
 import {
   Location,
+  MAX_NAME_LENGTH,
+  MAX_SOURCE_LENGTH,
   PLACEMENT_STATUSES,
   PlacementType,
+  POSTCODE_REGEX,
   SPAIN_BOUNDS,
   TRANSMITTER_TECHNOLOGIES,
   TRANSMITTER_TYPES
@@ -82,12 +85,14 @@ const transmitterSchema: Schema = new mongoose.Schema(
     stationName: {
       type: String,
       required: [true, 'A station name must be provided'],
-      trim: true
+      trim: true,
+      maxlength: [MAX_NAME_LENGTH, `stationName must be at most ${MAX_NAME_LENGTH} characters`]
     },
     broadcaster: {
       type: String,
       required: [true, 'A broadcaster must be provided'],
-      trim: true
+      trim: true,
+      maxlength: [MAX_NAME_LENGTH, `broadcaster must be at most ${MAX_NAME_LENGTH} characters`]
     },
     powerKw: {
       type: Number,
@@ -97,7 +102,8 @@ const transmitterSchema: Schema = new mongoose.Schema(
     source: {
       type: String,
       required: [true, 'A transmitter source must be provided'],
-      trim: true
+      trim: true,
+      maxlength: [MAX_SOURCE_LENGTH, `source must be at most ${MAX_SOURCE_LENGTH} characters`]
     }
   },
   { versionKey: false, strict: 'throw' }
@@ -116,7 +122,8 @@ const placementSchema: Schema = new mongoose.Schema(
     siteOperator: {
       type: String,
       required: [true, 'A site operator must be provided (use "unknown" if not known)'],
-      trim: true
+      trim: true,
+      maxlength: [MAX_NAME_LENGTH, `siteOperator must be at most ${MAX_NAME_LENGTH} characters`]
     },
     location: {
       type: locationSchema,
@@ -126,7 +133,7 @@ const placementSchema: Schema = new mongoose.Schema(
       type: String,
       default: null,
       trim: true,
-      match: [/^\d{5}$/, 'postcode must be 5 digits']
+      match: [POSTCODE_REGEX, 'postcode must be 5 digits']
     },
     transmitters: {
       type: [transmitterSchema],
@@ -140,7 +147,8 @@ const placementSchema: Schema = new mongoose.Schema(
     source: {
       type: String,
       required: [true, 'A source must be provided'],
-      trim: true
+      trim: true,
+      maxlength: [MAX_SOURCE_LENGTH, `source must be at most ${MAX_SOURCE_LENGTH} characters`]
     }
   },
   { versionKey: false, strict: 'throw' }
