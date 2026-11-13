@@ -20,8 +20,8 @@
     "lint": "eslint --fix .",
     "prettify": "prettier -w --log-level=silent .",
     "types": "tsc --noEmit",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "verify": "pnpm audit --prod && pnpm lint && pnpm prettify && pnpm types && pnpm build",
+    "test": "vitest run",
+    "verify": "pnpm audit --prod && pnpm lint && pnpm prettify && pnpm types && pnpm test && pnpm build",
     "generate:openapi": "ts-node scripts/generateOpenapi.ts",
     "generate:openapi:json": "ts-node scripts/generateOpenapi.ts --json"
   },
@@ -47,7 +47,8 @@
     "ts-node": "^10.9.2",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.72.2"
+    "typescript-eslint": "^8.72.2",
+    "vitest": "^5.1.0"
   },
   "dependencies": {
     "cors": "^2.8.6",
