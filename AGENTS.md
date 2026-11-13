@@ -13,9 +13,9 @@ Express + TypeScript API over MongoDB (Mongoose) serving radio/TV antenna sites 
 - Tests are co-located as `src/**/*.test.ts` and excluded from `tsconfig.json`, so `tsc` never emits them (and `pnpm types` doesn't check them; neither does it check `scripts/`).
 - `pnpm-workspace.yaml` `allowBuilds` lists packages allowed (or explicitly denied) to run install scripts; esbuild (via tsx) is denied, its binary works without it.
 - Express 5, Mongoose, express-validator, helmet, cors (origin whitelist), express-rate-limit on `/api`, `@exortek/express-mongo-sanitize`, compression, multer (import upload).
-- `dotenv` loads `.env` (gitignored); keep `.env.example` updated. `checkEnvVars()` exits on missing vars.
+- `dotenv` loads `config.env` (gitignored); keep `config.env.example` (committed) updated. `checkEnvVars()` exits on missing vars (and on a non-positive-integer `AUTH_TIMEOUT_MS`).
 - ESLint (flat config, typescript-eslint, prettier, simple-import-sort) + Prettier.
-- Vitest, unit tests only (mock Mongoose models and `fetch`; no real DB).
+- Vitest, unit tests only (mock Mongoose models and `fetch`; no real DB). `vitest.config.mts` (`.mts` because the package is CJS) restores mocks, stubbed globals and envs after each test. In tests that import Express's `Response` type, build fetch responses with `new globalThis.Response(...)`.
 - swagger-jsdoc: `@openapi` JSDoc in `src/routes/*.ts`, generated to an OpenAPI file by `scripts/generateOpenapi.ts`.
 
 ## Commands (rainlogger style; missing ones still to create)
@@ -24,7 +24,7 @@ Express + TypeScript API over MongoDB (Mongoose) serving radio/TV antenna sites 
 - `pnpm lint` (`eslint --fix .`), `pnpm prettify` (`prettier -w .`, whole repo; `.prettierignore` excludes `data/`, `dist/`, lockfile, `description.md`), `pnpm types` (`tsc --noEmit`)
 - ESLint (`eslint.config.mjs`) runs Prettier as a rule (`prettier/prettier`), so `pnpm lint` also fixes formatting. Non-type-aware `tseslint.configs.recommended`. Unused args ignored only if named `req|res|next|val` or `_`-prefixed. Import order enforced by simple-import-sort (`@macolmenerori` -> packages -> side-effect -> `../` -> `./`).
 - `pnpm test` (vitest run), single test: `pnpm vitest run path/to/file.test.ts -t "name"`
-- `pnpm verify`: audit -> lint -> prettify -> types -> test -> build (test step omitted until Vitest is set up)
+- `pnpm verify`: audit -> lint -> prettify -> types -> test -> build
 - `pnpm generate:openapi` (`tsx scripts/generateOpenapi.ts`)
 
 ## Structure
@@ -49,6 +49,8 @@ One `placements` collection. Transmitters are **embedded subdocuments with their
 ## API
 
 Base path `/api/v1`. Write endpoints use `protect` (any valid opensesame JWT; no role/permission check). Disallowed methods -> 405 via `methodNotAllowed`.
+
+Auth (`src/controllers/authController.ts`): `protect` reads only `Authorization: Bearer <token>` (no cookie; the front logs in to opensesame with header `authorizationtype: bearer`). It calls `GET ${AUTH_URL}/users/isloggedin` with `AbortSignal.timeout(AUTH_TIMEOUT_MS)`, no caching. Missing/malformed token or upstream 401 -> 401. Timeout, network error, other status or bad body -> 503 `Authentication service unavailable`. On success `req.user` holds only `_id, name, email, role, permissions`; handlers type `req` as `RequestWithUser` (`src/models/userTypes.ts`).
 
 | Method | Path                                       | Auth | Notes                                                                |
 | ------ | ------------------------------------------ | ---- | -------------------------------------------------------------------- |
@@ -77,7 +79,7 @@ Responses:
 
 - List: `{ status: "success", page, perPage, totalPages, total, results: [...] }`
 - Single: `{ status: "success", data: { placement | transmitter } }`
-- Error: `{ status: "fail" | "error", message, errors? }` (400 validation, 401 auth, 404, 405, 500)
+- Error: `{ status: "fail" | "error", message, errors? }` (400 validation, 401 auth, 404, 405, 500, 503 auth service unavailable)
 
 Import: run the API locally against the target DB for the big `data/*.json` files (Heroku has a 30 s request limit and 512 MB RAM). Size limit `IMPORT_MAX_SIZE_MB`; global `express.json` limit stays small. Validate each item with the Mongoose schema, `insertMany` in batches with `ordered: false`, ignore incoming `_id`s, respond `{ inserted, failed, errors: [{ index, message }] }`. No duplicate detection.
 
@@ -89,7 +91,7 @@ express-validator chains in `src/validations/` for path params (`isMongoId`), qu
 
 ## Environment variables
 
-`NODE_ENV`, `PORT`, `DATABASE`, `AUTH_URL`, `CORS_WHITELIST`, `RATELIMIT_MAXCONNECTIONS`, `RATELIMIT_WINDOWMS`, `DEFAULT_PERPAGE`, `MAX_PERPAGE`, `IMPORT_MAX_SIZE_MB`.
+`NODE_ENV`, `PORT`, `DATABASE`, `AUTH_URL`, `AUTH_TIMEOUT_MS`, `CORS_WHITELIST`, `RATELIMIT_MAXCONNECTIONS`, `RATELIMIT_WINDOWMS`, `DEFAULT_PERPAGE`, `MAX_PERPAGE`, `IMPORT_MAX_SIZE_MB`.
 
 ## Notes
 
