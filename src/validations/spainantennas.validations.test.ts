@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { MAX_NAME_LENGTH, MAX_SOURCE_LENGTH } from '../models/spainantennasTypes';
 
-import { createPlacementValidation } from './spainantennas.validations';
+import { createPlacementValidation, placementIdValidation } from './spainantennas.validations';
 
 const transmitter = () => ({
   type: 'radio',
@@ -262,5 +262,30 @@ describe('createPlacementValidation', () => {
       const body = { ...fullBody(), transmitters: [{ ...transmitter(), powerKw: 0 }] };
       expect((await validate(body)).errors).toEqual([]);
     });
+  });
+});
+
+describe('placementIdValidation', () => {
+  const validateId = async (id: string) => {
+    const req = { params: { id } } as unknown as Request;
+    for (const chain of placementIdValidation) {
+      await chain.run(req);
+    }
+    return validationResult(req).array() as FieldValidationError[];
+  };
+
+  it('accepts a valid ObjectId', async () => {
+    expect(await validateId('507f1f77bcf86cd799439011')).toEqual([]);
+  });
+
+  it.each(['abc', '507f1f77bcf86cd79943901z', ''])('rejects %j', async (id) => {
+    const errors = await validateId(id);
+    expect(errors).toEqual([
+      expect.objectContaining({
+        path: 'id',
+        location: 'params',
+        msg: 'id must be a valid MongoDB ObjectId'
+      })
+    ]);
   });
 });

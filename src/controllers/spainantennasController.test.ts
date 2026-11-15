@@ -4,13 +4,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import PlacementModel from '../models/spainantennasModel';
 import { RequestWithUser } from '../models/userTypes';
-import { createPlacementValidation } from '../validations/spainantennas.validations';
+import {
+  createPlacementValidation,
+  placementIdValidation
+} from '../validations/spainantennas.validations';
 
-import { createPlacement } from './spainantennasController';
+import { createPlacement, deletePlacement } from './spainantennasController';
 
-vi.mock('../models/spainantennasModel', () => ({ default: { create: vi.fn() } }));
+vi.mock('../models/spainantennasModel', () => ({
+  default: { create: vi.fn(), findByIdAndDelete: vi.fn() }
+}));
 
 const createMock = vi.mocked(PlacementModel.create);
+const findByIdAndDeleteMock = vi.mocked(PlacementModel.findByIdAndDelete);
 
 const NOW = new Date('2026-11-13T10:00:00.000Z');
 
@@ -164,6 +170,90 @@ describe('createPlacement', () => {
       location: {},
       source: 'Ministry'
     });
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ status: 'error', message: 'Internal server error' });
+  });
+});
+
+/**
+ * Runs the id validation, then deletePlacement, and resolves once it responds
+ * (res.json for errors, res.send for the 204).
+ */
+const runDelete = async (id: string) => {
+  const req = { params: { id }, body: { ignored: true } } as unknown as RequestWithUser;
+  for (const chain of placementIdValidation) {
+    await chain.run(req);
+  }
+  return new Promise<Response>((resolve) => {
+    const res = {} as Response;
+    const done = () => {
+      resolve(res);
+      return res;
+    };
+    res.status = vi.fn().mockReturnValue(res);
+    res.json = vi.fn().mockImplementation(done);
+    res.send = vi.fn().mockImplementation(done);
+    deletePlacement(req, res, vi.fn());
+  });
+};
+
+describe('deletePlacement', () => {
+  const ID = '507f1f77bcf86cd799439011';
+
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    findByIdAndDeleteMock.mockReset();
+  });
+
+  it('responds 400 without touching the DB when the id is invalid', async () => {
+    const res = await runDelete('abc');
+
+    expect(findByIdAndDeleteMock).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'fail',
+      message: 'Invalid input data',
+      errors: [
+        {
+          type: 'field',
+          value: 'abc',
+          msg: 'id must be a valid MongoDB ObjectId',
+          path: 'id',
+          location: 'params'
+        }
+      ]
+    });
+  });
+
+  it('responds 404 when no placement has that id', async () => {
+    findByIdAndDeleteMock.mockResolvedValue(null as never);
+
+    const res = await runDelete(ID);
+
+    expect(findByIdAndDeleteMock).toHaveBeenCalledWith(ID);
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'fail',
+      message: 'No placement found with that ID'
+    });
+  });
+
+  it('responds 204 with no body when the placement is deleted', async () => {
+    findByIdAndDeleteMock.mockResolvedValue({ _id: ID } as never);
+
+    const res = await runDelete(ID);
+
+    expect(findByIdAndDeleteMock).toHaveBeenCalledWith(ID);
+    expect(res.status).toHaveBeenCalledWith(204);
+    expect(res.send).toHaveBeenCalledWith();
+    expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('responds 500 on DB errors', async () => {
+    findByIdAndDeleteMock.mockRejectedValue(new Error('connection lost'));
+
+    const res = await runDelete(ID);
 
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith({ status: 'error', message: 'Internal server error' });
