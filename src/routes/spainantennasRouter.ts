@@ -1,9 +1,12 @@
 import express from 'express';
 
 import { protect } from '../controllers/authController';
-import { createPlacement } from '../controllers/spainantennasController';
+import { createPlacement, deletePlacement } from '../controllers/spainantennasController';
 import { methodNotAllowed } from '../utils/methodNotAllowed';
-import { createPlacementValidation } from '../validations/spainantennas.validations';
+import {
+  createPlacementValidation,
+  placementIdValidation
+} from '../validations/spainantennas.validations';
 
 /**
  * @openapi
@@ -308,5 +311,86 @@ router
   .route('/placement')
   .post(protect, createPlacementValidation, createPlacement)
   .all(methodNotAllowed(['POST']));
+
+/**
+ * @openapi
+ * /placement/{id}:
+ *   delete:
+ *     summary: Delete a placement
+ *     description: >
+ *       Deletes a placement and all its transmitters. Any request body or query string is
+ *       ignored.
+ *     tags:
+ *       - Placement
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         description: Placement MongoDB ObjectId
+ *         schema:
+ *           type: string
+ *           example: "507f1f77bcf86cd799439011"
+ *     responses:
+ *       204:
+ *         description: Placement deleted (no body)
+ *       400:
+ *         description: Invalid id
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationErrorResponse'
+ *             example:
+ *               status: fail
+ *               message: Invalid input data
+ *               errors:
+ *                 - type: field
+ *                   value: abc
+ *                   msg: id must be a valid MongoDB ObjectId
+ *                   path: id
+ *                   location: params
+ *       401:
+ *         description: Missing, malformed or rejected token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: fail
+ *               message: You are not logged in! Please log in to get access.
+ *       404:
+ *         description: No placement with that id
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: fail
+ *               message: No placement found with that ID
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: error
+ *               message: Internal server error
+ *       503:
+ *         description: Authentication service unavailable
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: error
+ *               message: Authentication service unavailable
+ */
+// Register /placement/import before this route, or its POST gets this route's 405
+router
+  .route('/placement/:id')
+  .delete(protect, placementIdValidation, deletePlacement)
+  .all(methodNotAllowed(['DELETE']));
 
 export default router;

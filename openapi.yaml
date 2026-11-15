@@ -23,7 +23,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/PlacementInput"
+              $ref: '#/components/schemas/PlacementInput'
             example:
               status: active
               siteOperator: Cellnex
@@ -31,7 +31,7 @@ paths:
                 lat: 40.4168
                 lon: -3.7038
                 altM: 657
-              postcode: "28001"
+              postcode: '28001'
               transmitters:
                 - type: radio
                   technology: FM
@@ -42,7 +42,7 @@ paths:
                   source: Ministry FM list
               source: Ministry station data
       responses:
-        "201":
+        '201':
           description: Placement created
           content:
             application/json:
@@ -56,13 +56,13 @@ paths:
                     type: object
                     properties:
                       placement:
-                        $ref: "#/components/schemas/Placement"
-        "400":
+                        $ref: '#/components/schemas/Placement'
+        '400':
           description: Validation error or malformed JSON body
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ValidationErrorResponse"
+                $ref: '#/components/schemas/ValidationErrorResponse'
               example:
                 status: fail
                 message: Invalid input data
@@ -72,39 +72,111 @@ paths:
                     msg: lat must be between 27 and 44
                     path: location.lat
                     location: body
-        "401":
+        '401':
           description: Missing, malformed or rejected token
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: '#/components/schemas/ErrorResponse'
               example:
                 status: fail
                 message: You are not logged in! Please log in to get access.
-        "413":
+        '413':
           description: Body larger than 1 MB
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: '#/components/schemas/ErrorResponse'
               example:
                 status: fail
                 message: Request body too large
-        "500":
+        '500':
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: '#/components/schemas/ErrorResponse'
               example:
                 status: error
                 message: Internal server error
-        "503":
+        '503':
           description: Authentication service unavailable
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                message: Authentication service unavailable
+  /placement/{id}:
+    delete:
+      summary: Delete a placement
+      description: >
+        Deletes a placement and all its transmitters. Any request body or query
+        string is ignored.
+      tags:
+        - Placement
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: Placement MongoDB ObjectId
+          schema:
+            type: string
+            example: 507f1f77bcf86cd799439011
+      responses:
+        '204':
+          description: Placement deleted (no body)
+        '400':
+          description: Invalid id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+              example:
+                status: fail
+                message: Invalid input data
+                errors:
+                  - type: field
+                    value: abc
+                    msg: id must be a valid MongoDB ObjectId
+                    path: id
+                    location: params
+        '401':
+          description: Missing, malformed or rejected token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: fail
+                message: You are not logged in! Please log in to get access.
+        '404':
+          description: No placement with that id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: fail
+                message: No placement found with that ID
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                message: Internal server error
+        '503':
+          description: Authentication service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
               example:
                 status: error
                 message: Authentication service unavailable
@@ -197,7 +269,7 @@ components:
               type: string
               description: MongoDB ObjectId
               example: 507f1f77bcf86cd799439012
-        - $ref: "#/components/schemas/TransmitterInput"
+        - $ref: '#/components/schemas/TransmitterInput'
     PlacementInput:
       type: object
       additionalProperties: false
@@ -223,18 +295,18 @@ components:
           description: Use "unknown" if not known
           example: Cellnex
         location:
-          $ref: "#/components/schemas/Location"
+          $ref: '#/components/schemas/Location'
         postcode:
           type: string
           nullable: true
           pattern: ^\d{5}$
           description: Omitted means null
-          example: "28001"
+          example: '28001'
         transmitters:
           type: array
           description: Omitted means empty
           items:
-            $ref: "#/components/schemas/TransmitterInput"
+            $ref: '#/components/schemas/TransmitterInput'
         lastUpdate:
           type: string
           format: date-time
@@ -259,14 +331,14 @@ components:
         siteOperator:
           type: string
         location:
-          $ref: "#/components/schemas/Location"
+          $ref: '#/components/schemas/Location'
         postcode:
           type: string
           nullable: true
         transmitters:
           type: array
           items:
-            $ref: "#/components/schemas/Transmitter"
+            $ref: '#/components/schemas/Transmitter'
         lastUpdate:
           type: string
           format: date-time

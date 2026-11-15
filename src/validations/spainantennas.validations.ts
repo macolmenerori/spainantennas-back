@@ -1,4 +1,4 @@
-import { body, ValidationChain } from 'express-validator';
+import { body, param, ValidationChain } from 'express-validator';
 
 import {
   Location,
@@ -161,4 +161,8 @@ export const createPlacementValidation: ValidationChain[] = [
     .withMessage('transmitters must be an array'),
   ...transmitterChains('transmitters.*'),
   requiredString('source', MAX_SOURCE_LENGTH)
+];
+
+export const placementIdValidation: ValidationChain[] = [
+  param('id').isMongoId().withMessage('id must be a valid MongoDB ObjectId')
 ];

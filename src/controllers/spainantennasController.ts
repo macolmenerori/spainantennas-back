@@ -28,6 +28,22 @@ const buildTransmitter = (transmitter: TransmitterBody): Transmitter => ({
 });
 
 /**
+ * Sends the 400 response when express-validator found errors.
+ *
+ * @returns The sent response when validation failed, `undefined` otherwise
+ */
+const checkValidation = (req: RequestWithUser, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      status: 'fail',
+      message: 'Invalid input data',
+      errors: errors.array()
+    });
+  }
+};
+
+/**
  * Creates a placement, with optional transmitters, from a body already checked by
  * `createPlacementValidation`. The document is built field by field; `lastUpdate` is
  * always stamped by the server.
@@ -36,13 +52,9 @@ const buildTransmitter = (transmitter: TransmitterBody): Transmitter => ({
  * Mongoose) fails.
  */
 export const createPlacement = catchAsync(async (req: RequestWithUser, res: Response) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      status: 'fail',
-      message: 'Invalid input data',
-      errors: errors.array()
-    });
+  const validation = checkValidation(req, res);
+  if (validation !== undefined) {
+    return validation;
   }
 
   const body = req.body as PlacementBody;
@@ -82,4 +94,27 @@ export const createPlacement = catchAsync(async (req: RequestWithUser, res: Resp
     }
     throw err;
   }
+});
+
+/**
+ * Deletes a placement, with its embedded transmitters, by the `id` path param already
+ * checked by `placementIdValidation`. Any body or query string is ignored.
+ *
+ * Responds 204 with no body, 400 on an invalid id, or 404 when no placement has that id.
+ */
+export const deletePlacement = catchAsync(async (req: RequestWithUser, res: Response) => {
+  const validation = checkValidation(req, res);
+  if (validation !== undefined) {
+    return validation;
+  }
+
+  const placement = await PlacementModel.findByIdAndDelete(req.params.id);
+  if (!placement) {
+    return res.status(404).json({
+      status: 'fail',
+      message: 'No placement found with that ID'
+    });
+  }
+
+  return res.status(204).send();
 });
