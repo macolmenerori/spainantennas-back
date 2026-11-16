@@ -4,7 +4,11 @@ import { describe, expect, it } from 'vitest';
 
 import { MAX_NAME_LENGTH, MAX_SOURCE_LENGTH } from '../models/spainantennasTypes';
 
-import { createPlacementValidation, placementIdValidation } from './spainantennas.validations';
+import {
+  createPlacementValidation,
+  placementIdValidation,
+  updatePlacementValidation
+} from './spainantennas.validations';
 
 const transmitter = () => ({
   type: 'radio',
@@ -287,5 +291,77 @@ describe('placementIdValidation', () => {
         msg: 'id must be a valid MongoDB ObjectId'
       })
     ]);
+  });
+});
+
+describe('updatePlacementValidation', () => {
+  const ID = '507f1f77bcf86cd799439011';
+  const TRANSMITTERS_MSG = 'transmitters cannot be changed here; use the transmitter endpoints';
+
+  const updateBody = () => {
+    const body: Partial<ReturnType<typeof fullBody>> = fullBody();
+    delete body.transmitters;
+    return body;
+  };
+
+  const validateUpdate = async (body: unknown, id = ID) => {
+    const req = { params: { id }, body } as unknown as Request;
+    for (const chain of updatePlacementValidation) {
+      await chain.run(req);
+    }
+    return validationResult(req).array() as FieldValidationError[];
+  };
+
+  it('accepts a full body without transmitters', async () => {
+    expect(await validateUpdate(updateBody())).toEqual([]);
+  });
+
+  it('accepts a minimal body', async () => {
+    expect(await validateUpdate(minimalBody())).toEqual([]);
+  });
+
+  it('accepts lastUpdate (ignored by the controller)', async () => {
+    const body = { ...minimalBody(), lastUpdate: '2026-01-01T00:00:00.000Z' };
+    expect(await validateUpdate(body)).toEqual([]);
+  });
+
+  it.each([
+    ['an empty array', []],
+    ['null', null],
+    ['a populated array', [transmitter()]]
+  ])('rejects transmitters as %s with one dedicated error', async (_name, transmitters) => {
+    const errors = await validateUpdate({ ...minimalBody(), transmitters });
+    expect(errors).toEqual([
+      expect.objectContaining({ path: 'transmitters', location: 'body', msg: TRANSMITTERS_MSG })
+    ]);
+  });
+
+  it.each(['foo', '_id'])('rejects unknown root key %s', async (key) => {
+    const errors = await validateUpdate({ ...minimalBody(), [key]: 'x' });
+    expect(errors).toEqual([
+      expect.objectContaining({ path: '', msg: `Unknown field(s): ${key}` })
+    ]);
+  });
+
+  it('applies the shared field rules', async () => {
+    const errors = await validateUpdate({
+      ...updateBody(),
+      status: 'broken',
+      location: { lat: 40.4 },
+      postcode: '123'
+    });
+    expect(errors.map((e) => e.path)).toEqual(
+      expect.arrayContaining(['status', 'location', 'postcode'])
+    );
+  });
+
+  it('reports id and body errors together', async () => {
+    const errors = await validateUpdate({ ...minimalBody(), status: 'broken' }, 'abc');
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: 'id', location: 'params' }),
+        expect.objectContaining({ path: 'status', location: 'body' })
+      ])
+    );
   });
 });
