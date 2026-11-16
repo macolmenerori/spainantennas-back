@@ -208,4 +208,11 @@ describe('fallbacks', () => {
     expect(malformed.status).toBe(400);
     expect(malformed.body).toEqual({ status: 'fail', message: 'Invalid JSON body' });
   });
+
+  it('allows only GET on /transmitter', async () => {
+    const res = await request(app).post('/api/v1/transmitter').send({});
+    expect(res.status).toBe(405);
+    expect(res.headers.allow).toBe('GET');
+    expect(res.body).toEqual({ status: 'fail', message: 'Method not allowed' });
+  });
 });

@@ -8,6 +8,7 @@ import { accentInsensitiveRegex } from '../utils/filters';
 import {
   createPlacementValidation,
   getPlacementsValidation,
+  getTransmittersValidation,
   placementIdValidation,
   updatePlacementValidation
 } from '../validations/spainantennas.validations';
@@ -16,6 +17,7 @@ import {
   createPlacement,
   deletePlacement,
   getPlacements,
+  getTransmitters,
   updatePlacement
 } from './spainantennasController';
 
@@ -25,9 +27,12 @@ vi.mock('../models/spainantennasModel', () => ({
     find: vi.fn(),
     countDocuments: vi.fn(),
     findById: vi.fn(),
-    findByIdAndDelete: vi.fn()
+    findByIdAndDelete: vi.fn(),
+    aggregate: vi.fn()
   }
 }));
+
+const aggregateMock = vi.mocked(PlacementModel.aggregate);
 
 const createMock = vi.mocked(PlacementModel.create);
 const findByIdMock = vi.mocked(PlacementModel.findById);
@@ -589,6 +594,211 @@ describe('getPlacements', () => {
     countDocumentsMock.mockRejectedValue(new Error('connection lost'));
 
     const res = await runGet({});
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ status: 'error', message: 'Internal server error' });
+  });
+});
+
+/**
+ * Runs the GET /transmitter validation, then getTransmitters, and resolves once it responds.
+ */
+const runGetTransmitters = async (query: Record<string, unknown>) => {
+  const req = { query } as unknown as Request;
+  for (const chain of getTransmittersValidation) {
+    await chain.run(req);
+  }
+  return new Promise<Response>((resolve) => {
+    const res = {} as Response;
+    res.status = vi.fn().mockReturnValue(res);
+    res.json = vi.fn().mockImplementation(() => {
+      resolve(res);
+      return res;
+    });
+    getTransmitters(req, res, vi.fn());
+  });
+};
+
+describe('getTransmitters', () => {
+  const PLACEMENT_ID = '507f1f77bcf86cd799439011';
+  const item = {
+    _id: '507f1f77bcf86cd799439012',
+    placementId: PLACEMENT_ID,
+    ...transmitter(),
+    placement: {
+      status: 'active',
+      siteOperator: 'Cellnex',
+      location: { lat: 40.4168, lon: -3.7038, altM: 657 },
+      postcode: '28001'
+    }
+  };
+
+  const projection = {
+    _id: '$transmitters._id',
+    placementId: '$_id',
+    type: '$transmitters.type',
+    technology: '$transmitters.technology',
+    frequencykHz: '$transmitters.frequencykHz',
+    stationName: '$transmitters.stationName',
+    broadcaster: '$transmitters.broadcaster',
+    powerKw: '$transmitters.powerKw',
+    source: '$transmitters.source',
+    placement: {
+      status: '$status',
+      siteOperator: '$siteOperator',
+      location: '$location',
+      postcode: '$postcode'
+    }
+  };
+
+  let countResult: { total: number }[];
+
+  // The count pipeline is the one ending in $count
+  const pipelines = () => {
+    const calls = aggregateMock.mock.calls.map(([pipeline]) => pipeline as object[]);
+    const isCount = (pipeline: object[]) => '$count' in pipeline[pipeline.length - 1];
+    return { results: calls.find((p) => !isCount(p))!, count: calls.find(isCount)! };
+  };
+
+  beforeEach(() => {
+    vi.stubEnv('DEFAULT_PERPAGE', '20');
+    vi.stubEnv('MAX_PERPAGE', '100');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    countResult = [{ total: 41 }];
+    aggregateMock.mockReset();
+    aggregateMock.mockImplementation(((pipeline: object[]) =>
+      Promise.resolve('$count' in pipeline[pipeline.length - 1] ? countResult : [item])) as never);
+  });
+
+  it('responds 400 without querying the DB when the query is invalid', async () => {
+    const res = await runGetTransmitters({ id: PLACEMENT_ID });
+
+    expect(aggregateMock).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'fail',
+        message: 'Invalid input data',
+        errors: [expect.objectContaining({ msg: 'Unknown query parameter(s): id' })]
+      })
+    );
+  });
+
+  it('lists the first page with defaults, sorting placements before $unwind', async () => {
+    const res = await runGetTransmitters({});
+
+    expect(aggregateMock).toHaveBeenCalledTimes(2);
+    expect(pipelines()).toEqual({
+      results: [
+        { $match: {} },
+        { $sort: { _id: 1 } },
+        { $unwind: '$transmitters' },
+        { $skip: 0 },
+        { $limit: 20 },
+        { $project: projection }
+      ],
+      count: [{ $match: {} }, { $unwind: '$transmitters' }, { $count: 'total' }]
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'success',
+      page: 1,
+      perPage: 20,
+      totalPages: 3,
+      total: 41,
+      results: [item]
+    });
+  });
+
+  it('caps perPage and echoes the capped value', async () => {
+    const res = await runGetTransmitters({ page: '2', perPage: '500' });
+
+    expect(pipelines().results).toEqual(expect.arrayContaining([{ $skip: 100 }, { $limit: 100 }]));
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 2, perPage: 100, totalPages: 1 })
+    );
+  });
+
+  it('matches placements before $unwind and transmitters again after it', async () => {
+    await runGetTransmitters({
+      placementId: PLACEMENT_ID,
+      status: 'active',
+      siteOperator: ' cellnex ',
+      postcode: '28001',
+      type: 'radio',
+      technology: 'FM,DAB+',
+      stationName: 'espana',
+      broadcaster: 'rtve'
+    });
+
+    const placementMatch = {
+      _id: { $in: [new mongoose.Types.ObjectId(PLACEMENT_ID)] },
+      status: { $in: ['active'] },
+      siteOperator: accentInsensitiveRegex('cellnex'),
+      postcode: { $in: ['28001'] },
+      transmitters: {
+        $elemMatch: {
+          type: { $in: ['radio'] },
+          technology: { $in: ['FM', 'DAB+'] },
+          stationName: accentInsensitiveRegex('espana'),
+          broadcaster: accentInsensitiveRegex('rtve')
+        }
+      }
+    };
+    const transmitterMatch = {
+      'transmitters.type': { $in: ['radio'] },
+      'transmitters.technology': { $in: ['FM', 'DAB+'] },
+      'transmitters.stationName': accentInsensitiveRegex('espana'),
+      'transmitters.broadcaster': accentInsensitiveRegex('rtve')
+    };
+    expect(pipelines()).toEqual({
+      results: [
+        { $match: placementMatch },
+        { $sort: { _id: 1 } },
+        { $unwind: '$transmitters' },
+        { $match: transmitterMatch },
+        { $skip: 0 },
+        { $limit: 20 },
+        { $project: projection }
+      ],
+      count: [
+        { $match: placementMatch },
+        { $unwind: '$transmitters' },
+        { $match: transmitterMatch },
+        { $count: 'total' }
+      ]
+    });
+  });
+
+  it('casts placementId values to ObjectId', async () => {
+    await runGetTransmitters({ placementId: PLACEMENT_ID });
+
+    const match = (pipelines().results[0] as { $match: { _id: { $in: unknown[] } } }).$match;
+    expect(match._id.$in[0]).toBeInstanceOf(mongoose.Types.ObjectId);
+  });
+
+  it('responds 200 with empty results and total 0 when nothing matches', async () => {
+    countResult = [];
+    aggregateMock.mockImplementation(((pipeline: object[]) =>
+      Promise.resolve('$count' in pipeline[pipeline.length - 1] ? countResult : [])) as never);
+
+    const res = await runGetTransmitters({ technology: 'AM-LW' });
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'success',
+      page: 1,
+      perPage: 20,
+      totalPages: 0,
+      total: 0,
+      results: []
+    });
+  });
+
+  it('responds 500 on DB errors', async () => {
+    aggregateMock.mockRejectedValue(new Error('connection lost'));
+
+    const res = await runGetTransmitters({});
 
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith({ status: 'error', message: 'Internal server error' });

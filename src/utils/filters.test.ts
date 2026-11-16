@@ -1,6 +1,12 @@
+import { Types } from 'mongoose';
 import { describe, expect, it } from 'vitest';
 
-import { accentInsensitiveRegex, buildPlacementFilter, splitList } from './filters';
+import {
+  accentInsensitiveRegex,
+  buildPlacementFilter,
+  buildTransmitterPipelineFilters,
+  splitList
+} from './filters';
 
 describe('splitList', () => {
   it('splits on commas and trims items', () => {
@@ -100,6 +106,73 @@ describe('buildPlacementFilter', () => {
     expect(buildPlacementFilter({ status: ['active'], technology: ['TDT'] })).toEqual({
       status: { $in: ['active'] },
       transmitters: { $elemMatch: { technology: { $in: ['TDT'] } } }
+    });
+  });
+});
+
+describe('buildTransmitterPipelineFilters', () => {
+  const ID = '507f1f77bcf86cd799439011';
+
+  it('returns an empty placement match and no transmitter match with no query', () => {
+    expect(buildTransmitterPipelineFilters({})).toEqual({
+      placementMatch: {},
+      transmitterMatch: undefined
+    });
+  });
+
+  it('casts placement ids to ObjectId', () => {
+    const { placementMatch } = buildTransmitterPipelineFilters({ placementId: [ID] });
+    const ids = (placementMatch._id as { $in: unknown[] }).$in;
+
+    expect(ids).toHaveLength(1);
+    expect(ids[0]).toBeInstanceOf(Types.ObjectId);
+    expect(String(ids[0])).toBe(ID);
+  });
+
+  it('keeps placement filters before $unwind only', () => {
+    expect(
+      buildTransmitterPipelineFilters({
+        status: ['active'],
+        postcode: ['28001'],
+        siteOperator: 'cellnex'
+      })
+    ).toEqual({
+      placementMatch: {
+        status: { $in: ['active'] },
+        postcode: { $in: ['28001'] },
+        siteOperator: accentInsensitiveRegex('cellnex')
+      },
+      transmitterMatch: undefined
+    });
+  });
+
+  it('matches transmitter filters with $elemMatch before $unwind and prefixed after', () => {
+    expect(
+      buildTransmitterPipelineFilters({
+        status: ['active'],
+        type: ['radio'],
+        technology: ['FM', 'DAB+'],
+        stationName: 'espana',
+        broadcaster: 'rtve'
+      })
+    ).toEqual({
+      placementMatch: {
+        status: { $in: ['active'] },
+        transmitters: {
+          $elemMatch: {
+            type: { $in: ['radio'] },
+            technology: { $in: ['FM', 'DAB+'] },
+            stationName: accentInsensitiveRegex('espana'),
+            broadcaster: accentInsensitiveRegex('rtve')
+          }
+        }
+      },
+      transmitterMatch: {
+        'transmitters.type': { $in: ['radio'] },
+        'transmitters.technology': { $in: ['FM', 'DAB+'] },
+        'transmitters.stationName': accentInsensitiveRegex('espana'),
+        'transmitters.broadcaster': accentInsensitiveRegex('rtve')
+      }
     });
   });
 });
