@@ -5,12 +5,14 @@ import {
   createPlacement,
   deletePlacement,
   getPlacements,
+  getTransmitters,
   updatePlacement
 } from '../controllers/spainantennasController';
 import { methodNotAllowed } from '../utils/methodNotAllowed';
 import {
   createPlacementValidation,
   getPlacementsValidation,
+  getTransmittersValidation,
   placementIdValidation,
   updatePlacementValidation
 } from '../validations/spainantennas.validations';
@@ -256,6 +258,28 @@ import {
  *           format: date-time
  *         source:
  *           type: string
+ *     TransmitterListItem:
+ *       allOf:
+ *         - $ref: '#/components/schemas/Transmitter'
+ *         - type: object
+ *           properties:
+ *             placementId:
+ *               type: string
+ *               description: ObjectId of the parent placement
+ *               example: "507f1f77bcf86cd799439011"
+ *             placement:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   enum: [active, inactive, unknown]
+ *                 siteOperator:
+ *                   type: string
+ *                 location:
+ *                   $ref: '#/components/schemas/Location'
+ *                 postcode:
+ *                   type: string
+ *                   nullable: true
  *     ListMeta:
  *       type: object
  *       properties:
@@ -748,5 +772,133 @@ router
   .put(protect, updatePlacementValidation, updatePlacement)
   .delete(protect, placementIdValidation, deletePlacement)
   .all(methodNotAllowed(['PUT', 'DELETE']));
+
+/**
+ * @openapi
+ * /transmitter:
+ *   get:
+ *     summary: List transmitters
+ *     description: >
+ *       Public, paginated list with one item per transmitter, each with a slice of its
+ *       placement. Sorted by placement _id, then by the transmitters' stored order.
+ *       Placements without transmitters yield nothing; sites without coordinates are
+ *       included. Filters are ANDed. Comma lists match any of their values (max 100
+ *       values). Text filters are case- and accent-insensitive partial matches (vowel
+ *       accents, n/ñ, c/ç) and take a single term (commas are literal). Placement filters
+ *       (placementId, status, siteOperator, postcode) apply to the parent placement;
+ *       transmitter filters (type, technology, stationName, broadcaster) must all match
+ *       the returned transmitter. Each parameter may appear once and cannot be empty;
+ *       unknown parameters are rejected.
+ *     tags:
+ *       - Transmitter
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *       - in: query
+ *         name: perPage
+ *         description: Defaults to DEFAULT_PERPAGE; values above MAX_PERPAGE are capped
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *       - in: query
+ *         name: placementId
+ *         description: Placement ObjectId, or a comma-separated list of them
+ *         schema:
+ *           type: string
+ *           example: "507f1f77bcf86cd799439011"
+ *       - in: query
+ *         name: status
+ *         description: Placement status, comma-separated list of active, inactive, unknown
+ *         schema:
+ *           type: string
+ *           example: active
+ *       - in: query
+ *         name: siteOperator
+ *         description: Partial match, case- and accent-insensitive
+ *         schema:
+ *           type: string
+ *           maxLength: 200
+ *           example: cellnex
+ *       - in: query
+ *         name: postcode
+ *         description: 5-digit postcode, or a comma-separated list of them (exact match)
+ *         schema:
+ *           type: string
+ *           example: "28001,28002"
+ *       - in: query
+ *         name: type
+ *         description: Comma-separated list of TV, radio
+ *         schema:
+ *           type: string
+ *           example: radio
+ *       - in: query
+ *         name: technology
+ *         description: Comma-separated list of AM-LW, AM-MW, FM, TDT, DAB+ (encode + as %2B)
+ *         schema:
+ *           type: string
+ *           example: FM,DAB%2B
+ *       - in: query
+ *         name: stationName
+ *         description: Partial match, case- and accent-insensitive
+ *         schema:
+ *           type: string
+ *           maxLength: 200
+ *           example: espana
+ *       - in: query
+ *         name: broadcaster
+ *         description: Partial match, case- and accent-insensitive
+ *         schema:
+ *           type: string
+ *           maxLength: 200
+ *           example: rtve
+ *     responses:
+ *       200:
+ *         description: Page of transmitters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/ListMeta'
+ *                 - type: object
+ *                   properties:
+ *                     results:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/TransmitterListItem'
+ *       400:
+ *         description: Invalid query (unknown, repeated or empty parameter, bad value)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationErrorResponse'
+ *             example:
+ *               status: fail
+ *               message: Invalid input data
+ *               errors:
+ *                 - type: field
+ *                   value: abc
+ *                   msg: placementId must be a valid MongoDB ObjectId (or a comma-separated list of them)
+ *                   path: placementId
+ *                   location: query
+ *       429:
+ *         $ref: '#/components/responses/TooManyRequests'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: error
+ *               message: Internal server error
+ */
+router
+  .route('/transmitter')
+  .get(getTransmittersValidation, getTransmitters)
+  .all(methodNotAllowed(['GET']));
 
 export default router;

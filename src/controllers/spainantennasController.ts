@@ -1,12 +1,17 @@
 import { Request, Response } from 'express';
 import { matchedData, validationResult } from 'express-validator';
-import mongoose from 'mongoose';
+import mongoose, { PipelineStage } from 'mongoose';
 
 import PlacementModel from '../models/spainantennasModel';
 import { Location, Placement, Transmitter } from '../models/spainantennasTypes';
 import { RequestWithUser } from '../models/userTypes';
 import catchAsync from '../utils/catchAsync';
-import { buildPlacementFilter, PlacementFilterQuery } from '../utils/filters';
+import {
+  buildPlacementFilter,
+  buildTransmitterPipelineFilters,
+  PlacementFilterQuery,
+  TransmitterFilterQuery
+} from '../utils/filters';
 import { buildListResponse, getPagination } from '../utils/pagination';
 
 // Body shapes once express-validator has passed: nullable keys may be omitted
@@ -25,6 +30,31 @@ type PlacementListQuery = PlacementFilterQuery & {
   page?: number;
   perPage?: number;
   fields?: 'summary';
+};
+
+// GET /transmitter query once validated and sanitized by getTransmittersValidation
+type TransmitterListQuery = TransmitterFilterQuery & {
+  page?: number;
+  perPage?: number;
+};
+
+// Shape of each GET /transmitter item, built from an unwound placement document
+const TRANSMITTER_ITEM_PROJECTION = {
+  _id: '$transmitters._id',
+  placementId: '$_id',
+  type: '$transmitters.type',
+  technology: '$transmitters.technology',
+  frequencykHz: '$transmitters.frequencykHz',
+  stationName: '$transmitters.stationName',
+  broadcaster: '$transmitters.broadcaster',
+  powerKw: '$transmitters.powerKw',
+  source: '$transmitters.source',
+  placement: {
+    status: '$status',
+    siteOperator: '$siteOperator',
+    location: '$location',
+    postcode: '$postcode'
+  }
 };
 
 // Placement fields a PUT may replace: everything but transmitters and lastUpdate
@@ -122,6 +152,54 @@ export const getPlacements = catchAsync(async (req: Request, res: Response) => {
     PlacementModel.countDocuments(filter)
   ]);
 
+  return res.status(200).json(buildListResponse(results, total, pagination));
+});
+
+/**
+ * Lists transmitters, one item per transmitter with a slice of its placement, from a query
+ * already checked by `getTransmittersValidation`. Filters are ANDed. Sorted by placement
+ * `_id`, then by the transmitters' stored order: the sort runs on placements before
+ * `$unwind`, so it uses the `_id` index instead of sorting every transmitter in memory.
+ * Placements without transmitters yield nothing. Public: no authentication.
+ *
+ * Responds 200 with the list shape (empty `results` when nothing matches), or 400 when
+ * the query is invalid.
+ */
+export const getTransmitters = catchAsync(async (req: Request, res: Response) => {
+  const validation = checkValidation(req, res);
+  if (validation !== undefined) {
+    return validation;
+  }
+
+  // Sanitized values: Express 5 re-parses req.query, dropping express-validator's changes
+  const { page, perPage, ...filters } = matchedData(req, {
+    locations: ['query']
+  }) as TransmitterListQuery;
+  const pagination = getPagination(page, perPage);
+  const { placementMatch, transmitterMatch } = buildTransmitterPipelineFilters(filters);
+  const transmitterStages: PipelineStage[] = [
+    { $unwind: '$transmitters' },
+    ...(transmitterMatch ? [{ $match: transmitterMatch }] : [])
+  ];
+
+  const [results, countResult] = await Promise.all([
+    PlacementModel.aggregate([
+      { $match: placementMatch },
+      { $sort: { _id: 1 } },
+      ...transmitterStages,
+      { $skip: pagination.skip },
+      { $limit: pagination.perPage },
+      { $project: TRANSMITTER_ITEM_PROJECTION }
+    ]),
+    PlacementModel.aggregate<{ total: number }>([
+      { $match: placementMatch },
+      ...transmitterStages,
+      { $count: 'total' }
+    ])
+  ]);
+
+  // $count emits no document when nothing matches
+  const total = countResult[0]?.total ?? 0;
   return res.status(200).json(buildListResponse(results, total, pagination));
 });
 

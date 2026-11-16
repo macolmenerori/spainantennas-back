@@ -272,22 +272,15 @@ const textQuery = (field: string): ValidationChain =>
     .isLength({ max: MAX_NAME_LENGTH })
     .withMessage(`${field} must be at most ${MAX_NAME_LENGTH} characters`);
 
-/**
- * GET /placement query. Express 5 re-parses `req.query` on every access, so sanitized
- * values (ints, trimmed text, split lists) must be read with `matchedData()`.
- */
-export const getPlacementsValidation: ValidationChain[] = [
-  query().custom(onlyKeys(PLACEMENT_QUERY_KEYS, 'query parameter')),
-  paginationQuery('page'),
-  paginationQuery('perPage'),
-  singleQueryValue('fields')
-    .isIn(PLACEMENT_FIELDS_VALUES)
-    .withMessage(`fields must be one of: ${PLACEMENT_FIELDS_VALUES.join(', ')}`),
+const objectIdListQuery = (field: string): ValidationChain =>
   listQuery(
-    'id',
+    field,
     (item) => OBJECT_ID_REGEX.test(item),
-    'id must be a valid MongoDB ObjectId (or a comma-separated list of them)'
-  ),
+    `${field} must be a valid MongoDB ObjectId (or a comma-separated list of them)`
+  );
+
+// Placement and transmitter filters shared by GET /placement and GET /transmitter
+const sharedFilterChains = (): ValidationChain[] => [
   enumListQuery('status', PLACEMENT_STATUSES),
   textQuery('siteOperator'),
   listQuery(
@@ -299,4 +292,45 @@ export const getPlacementsValidation: ValidationChain[] = [
   enumListQuery('technology', TRANSMITTER_TECHNOLOGIES),
   textQuery('stationName'),
   textQuery('broadcaster')
+];
+
+/**
+ * GET /placement query. Express 5 re-parses `req.query` on every access, so sanitized
+ * values (ints, trimmed text, split lists) must be read with `matchedData()`.
+ */
+export const getPlacementsValidation: ValidationChain[] = [
+  query().custom(onlyKeys(PLACEMENT_QUERY_KEYS, 'query parameter')),
+  paginationQuery('page'),
+  paginationQuery('perPage'),
+  singleQueryValue('fields')
+    .isIn(PLACEMENT_FIELDS_VALUES)
+    .withMessage(`fields must be one of: ${PLACEMENT_FIELDS_VALUES.join(', ')}`),
+  objectIdListQuery('id'),
+  ...sharedFilterChains()
+];
+
+// Query parameters accepted by GET /transmitter. Anything else is rejected.
+const TRANSMITTER_QUERY_KEYS = [
+  'page',
+  'perPage',
+  'placementId',
+  'status',
+  'siteOperator',
+  'postcode',
+  'type',
+  'technology',
+  'stationName',
+  'broadcaster'
+] as const;
+
+/**
+ * GET /transmitter query. Same rules as GET /placement; the placement id filter is
+ * `placementId` and there is no `fields`. Read sanitized values with `matchedData()`.
+ */
+export const getTransmittersValidation: ValidationChain[] = [
+  query().custom(onlyKeys(TRANSMITTER_QUERY_KEYS, 'query parameter')),
+  paginationQuery('page'),
+  paginationQuery('perPage'),
+  objectIdListQuery('placementId'),
+  ...sharedFilterChains()
 ];

@@ -93,44 +93,44 @@ paths:
             maxLength: 200
             example: rtve
       responses:
-        '200':
+        "200":
           description: Page of placements (full, or summary with fields=summary)
           content:
             application/json:
               schema:
                 allOf:
-                  - $ref: '#/components/schemas/ListMeta'
+                  - $ref: "#/components/schemas/ListMeta"
                   - type: object
                     properties:
                       results:
                         type: array
                         items:
                           oneOf:
-                            - $ref: '#/components/schemas/Placement'
-                            - $ref: '#/components/schemas/PlacementSummary'
-        '400':
+                            - $ref: "#/components/schemas/Placement"
+                            - $ref: "#/components/schemas/PlacementSummary"
+        "400":
           description: Invalid query (unknown, repeated or empty parameter, bad value)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ValidationErrorResponse'
+                $ref: "#/components/schemas/ValidationErrorResponse"
               example:
                 status: fail
                 message: Invalid input data
                 errors:
                   - type: field
                     value: FM,XYZ
-                    msg: 'technology must be one of: AM-LW, AM-MW, FM, TDT, DAB+'
+                    msg: "technology must be one of: AM-LW, AM-MW, FM, TDT, DAB+"
                     path: technology
                     location: query
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 status: error
                 message: Internal server error
@@ -149,7 +149,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PlacementInput'
+              $ref: "#/components/schemas/PlacementInput"
             example:
               status: active
               siteOperator: Cellnex
@@ -157,7 +157,7 @@ paths:
                 lat: 40.4168
                 lon: -3.7038
                 altM: 657
-              postcode: '28001'
+              postcode: "28001"
               transmitters:
                 - type: radio
                   technology: FM
@@ -168,7 +168,7 @@ paths:
                   source: Ministry FM list
               source: Ministry station data
       responses:
-        '201':
+        "201":
           description: Placement created
           content:
             application/json:
@@ -182,13 +182,13 @@ paths:
                     type: object
                     properties:
                       placement:
-                        $ref: '#/components/schemas/Placement'
-        '400':
+                        $ref: "#/components/schemas/Placement"
+        "400":
           description: Validation error or malformed JSON body
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ValidationErrorResponse'
+                $ref: "#/components/schemas/ValidationErrorResponse"
               example:
                 status: fail
                 message: Invalid input data
@@ -198,41 +198,41 @@ paths:
                     msg: lat must be between 27 and 44
                     path: location.lat
                     location: body
-        '401':
+        "401":
           description: Missing, malformed or rejected token
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 status: fail
                 message: You are not logged in! Please log in to get access.
-        '413':
+        "413":
           description: Body larger than 1 MB
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 status: fail
                 message: Request body too large
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 status: error
                 message: Internal server error
-        '503':
+        "503":
           description: Authentication service unavailable
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 status: error
                 message: Authentication service unavailable
@@ -261,7 +261,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PlacementUpdateInput'
+              $ref: "#/components/schemas/PlacementUpdateInput"
             example:
               status: inactive
               siteOperator: Cellnex
@@ -269,10 +269,10 @@ paths:
                 lat: 40.4168
                 lon: -3.7038
                 altM: 657
-              postcode: '28001'
+              postcode: "28001"
               source: Ministry station data
       responses:
-        '200':
+        "200":
           description: Placement updated, returned with its transmitters
           content:
             application/json:
@@ -286,13 +286,13 @@ paths:
                     type: object
                     properties:
                       placement:
-                        $ref: '#/components/schemas/Placement'
-        '400':
+                        $ref: "#/components/schemas/Placement"
+        "400":
           description: Invalid id, validation error or malformed JSON body
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ValidationErrorResponse'
+                $ref: "#/components/schemas/ValidationErrorResponse"
               example:
                 status: fail
                 message: Invalid input data
@@ -302,50 +302,50 @@ paths:
                     msg: transmitters cannot be changed here; use the transmitter endpoints
                     path: transmitters
                     location: body
-        '401':
+        "401":
           description: Missing, malformed or rejected token
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 status: fail
                 message: You are not logged in! Please log in to get access.
-        '404':
+        "404":
           description: No placement with that id
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 status: fail
                 message: No placement found with that ID
-        '413':
+        "413":
           description: Body larger than 1 MB
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 status: fail
                 message: Request body too large
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 status: error
                 message: Internal server error
-        '503':
+        "503":
           description: Authentication service unavailable
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 status: error
                 message: Authentication service unavailable
@@ -367,14 +367,14 @@ paths:
             type: string
             example: 507f1f77bcf86cd799439011
       responses:
-        '204':
+        "204":
           description: Placement deleted (no body)
-        '400':
+        "400":
           description: Invalid id
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ValidationErrorResponse'
+                $ref: "#/components/schemas/ValidationErrorResponse"
               example:
                 status: fail
                 message: Invalid input data
@@ -384,44 +384,166 @@ paths:
                     msg: id must be a valid MongoDB ObjectId
                     path: id
                     location: params
-        '401':
+        "401":
           description: Missing, malformed or rejected token
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 status: fail
                 message: You are not logged in! Please log in to get access.
-        '404':
+        "404":
           description: No placement with that id
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 status: fail
                 message: No placement found with that ID
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 status: error
                 message: Internal server error
-        '503':
+        "503":
           description: Authentication service unavailable
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
               example:
                 status: error
                 message: Authentication service unavailable
+  /transmitter:
+    get:
+      summary: List transmitters
+      description: >
+        Public, paginated list with one item per transmitter, each with a slice
+        of its placement. Sorted by placement _id, then by the transmitters'
+        stored order. Placements without transmitters yield nothing; sites
+        without coordinates are included. Filters are ANDed. Comma lists match
+        any of their values (max 100 values). Text filters are case- and
+        accent-insensitive partial matches (vowel accents, n/ñ, c/ç) and take a
+        single term (commas are literal). Placement filters (placementId,
+        status, siteOperator, postcode) apply to the parent placement;
+        transmitter filters (type, technology, stationName, broadcaster) must
+        all match the returned transmitter. Each parameter may appear once and
+        cannot be empty; unknown parameters are rejected.
+      tags:
+        - Transmitter
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: perPage
+          description: Defaults to DEFAULT_PERPAGE; values above MAX_PERPAGE are capped
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: placementId
+          description: Placement ObjectId, or a comma-separated list of them
+          schema:
+            type: string
+            example: 507f1f77bcf86cd799439011
+        - in: query
+          name: status
+          description: Placement status, comma-separated list of active, inactive, unknown
+          schema:
+            type: string
+            example: active
+        - in: query
+          name: siteOperator
+          description: Partial match, case- and accent-insensitive
+          schema:
+            type: string
+            maxLength: 200
+            example: cellnex
+        - in: query
+          name: postcode
+          description: 5-digit postcode, or a comma-separated list of them (exact match)
+          schema:
+            type: string
+            example: 28001,28002
+        - in: query
+          name: type
+          description: Comma-separated list of TV, radio
+          schema:
+            type: string
+            example: radio
+        - in: query
+          name: technology
+          description: Comma-separated list of AM-LW, AM-MW, FM, TDT, DAB+ (encode + as %2B)
+          schema:
+            type: string
+            example: FM,DAB%2B
+        - in: query
+          name: stationName
+          description: Partial match, case- and accent-insensitive
+          schema:
+            type: string
+            maxLength: 200
+            example: espana
+        - in: query
+          name: broadcaster
+          description: Partial match, case- and accent-insensitive
+          schema:
+            type: string
+            maxLength: 200
+            example: rtve
+      responses:
+        "200":
+          description: Page of transmitters
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListMeta"
+                  - type: object
+                    properties:
+                      results:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/TransmitterListItem"
+        "400":
+          description: Invalid query (unknown, repeated or empty parameter, bad value)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorResponse"
+              example:
+                status: fail
+                message: Invalid input data
+                errors:
+                  - type: field
+                    value: abc
+                    msg: placementId must be a valid MongoDB ObjectId (or a comma-separated list of
+                      them)
+                    path: placementId
+                    location: query
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                status: error
+                message: Internal server error
 components:
   securitySchemes:
     bearerAuth:
@@ -451,7 +573,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            $ref: "#/components/schemas/ErrorResponse"
           example:
             status: fail
             message: Too many requests, please try again later
@@ -537,7 +659,7 @@ components:
               type: string
               description: MongoDB ObjectId
               example: 507f1f77bcf86cd799439012
-        - $ref: '#/components/schemas/TransmitterInput'
+        - $ref: "#/components/schemas/TransmitterInput"
     PlacementInput:
       type: object
       additionalProperties: false
@@ -563,18 +685,18 @@ components:
           description: Use "unknown" if not known
           example: Cellnex
         location:
-          $ref: '#/components/schemas/Location'
+          $ref: "#/components/schemas/Location"
         postcode:
           type: string
           nullable: true
           pattern: ^\d{5}$
           description: Omitted means null
-          example: '28001'
+          example: "28001"
         transmitters:
           type: array
           description: Omitted means empty
           items:
-            $ref: '#/components/schemas/TransmitterInput'
+            $ref: "#/components/schemas/TransmitterInput"
         lastUpdate:
           type: string
           format: date-time
@@ -610,13 +732,13 @@ components:
           description: Use "unknown" if not known
           example: Cellnex
         location:
-          $ref: '#/components/schemas/Location'
+          $ref: "#/components/schemas/Location"
         postcode:
           type: string
           nullable: true
           pattern: ^\d{5}$
           description: Omitted means null
-          example: '28001'
+          example: "28001"
         lastUpdate:
           type: string
           format: date-time
@@ -641,14 +763,14 @@ components:
         siteOperator:
           type: string
         location:
-          $ref: '#/components/schemas/Location'
+          $ref: "#/components/schemas/Location"
         postcode:
           type: string
           nullable: true
         transmitters:
           type: array
           items:
-            $ref: '#/components/schemas/Transmitter'
+            $ref: "#/components/schemas/Transmitter"
         lastUpdate:
           type: string
           format: date-time
@@ -672,7 +794,7 @@ components:
         siteOperator:
           type: string
         location:
-          $ref: '#/components/schemas/Location'
+          $ref: "#/components/schemas/Location"
         postcode:
           type: string
           nullable: true
@@ -681,6 +803,31 @@ components:
           format: date-time
         source:
           type: string
+    TransmitterListItem:
+      allOf:
+        - $ref: "#/components/schemas/Transmitter"
+        - type: object
+          properties:
+            placementId:
+              type: string
+              description: ObjectId of the parent placement
+              example: 507f1f77bcf86cd799439011
+            placement:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum:
+                    - active
+                    - inactive
+                    - unknown
+                siteOperator:
+                  type: string
+                location:
+                  $ref: "#/components/schemas/Location"
+                postcode:
+                  type: string
+                  nullable: true
     ListMeta:
       type: object
       properties:
