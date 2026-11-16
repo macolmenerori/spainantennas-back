@@ -109,6 +109,116 @@ paths:
                 status: error
                 message: Authentication service unavailable
   /placement/{id}:
+    put:
+      summary: Update a placement
+      description: >
+        Replaces every placement field (status, siteOperator, location,
+        postcode, source). Transmitters are left untouched and cannot be sent.
+        Nullable fields may be omitted (stored as null). Numbers must be JSON
+        numbers. lastUpdate is set by the server.
+      tags:
+        - Placement
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: Placement MongoDB ObjectId
+          schema:
+            type: string
+            example: 507f1f77bcf86cd799439011
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlacementUpdateInput'
+            example:
+              status: inactive
+              siteOperator: Cellnex
+              location:
+                lat: 40.4168
+                lon: -3.7038
+                altM: 657
+              postcode: '28001'
+              source: Ministry station data
+      responses:
+        '200':
+          description: Placement updated, returned with its transmitters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: object
+                    properties:
+                      placement:
+                        $ref: '#/components/schemas/Placement'
+        '400':
+          description: Invalid id, validation error or malformed JSON body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+              example:
+                status: fail
+                message: Invalid input data
+                errors:
+                  - type: field
+                    value: []
+                    msg: transmitters cannot be changed here; use the transmitter endpoints
+                    path: transmitters
+                    location: body
+        '401':
+          description: Missing, malformed or rejected token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: fail
+                message: You are not logged in! Please log in to get access.
+        '404':
+          description: No placement with that id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: fail
+                message: No placement found with that ID
+        '413':
+          description: Body larger than 1 MB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: fail
+                message: Request body too large
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                message: Internal server error
+        '503':
+          description: Authentication service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                message: Authentication service unavailable
     delete:
       summary: Delete a placement
       description: >
@@ -307,6 +417,48 @@ components:
           description: Omitted means empty
           items:
             $ref: '#/components/schemas/TransmitterInput'
+        lastUpdate:
+          type: string
+          format: date-time
+          description: Ignored
+        source:
+          type: string
+          maxLength: 5000
+          example: Ministry station data
+    PlacementUpdateInput:
+      type: object
+      additionalProperties: false
+      description: >
+        Same as PlacementInput without transmitters. Any transmitters key (even
+        [] or null) is rejected: use the transmitter endpoints. Unknown keys
+        (and any _id) are rejected. lastUpdate is accepted but ignored: the
+        server stamps it.
+      required:
+        - status
+        - siteOperator
+        - location
+        - source
+      properties:
+        status:
+          type: string
+          enum:
+            - active
+            - inactive
+            - unknown
+          example: active
+        siteOperator:
+          type: string
+          maxLength: 200
+          description: Use "unknown" if not known
+          example: Cellnex
+        location:
+          $ref: '#/components/schemas/Location'
+        postcode:
+          type: string
+          nullable: true
+          pattern: ^\d{5}$
+          description: Omitted means null
+          example: '28001'
         lastUpdate:
           type: string
           format: date-time

@@ -119,7 +119,11 @@ const transmitterChains = (prefix: string): ValidationChain[] => [
   requiredString(`${prefix}.source`, MAX_SOURCE_LENGTH)
 ];
 
-export const createPlacementValidation: ValidationChain[] = [
+/**
+ * Chains shared by create and update: root shape and every placement field except
+ * `transmitters`, which each caller validates (create) or rejects (update) itself.
+ */
+const placementFieldChains = (): ValidationChain[] => [
   body()
     .custom(isPlainObject)
     .withMessage('Body must be a JSON object')
@@ -155,14 +159,29 @@ export const createPlacementValidation: ValidationChain[] = [
     .trim()
     .matches(POSTCODE_REGEX)
     .withMessage('postcode must be 5 digits'),
+  requiredString('source', MAX_SOURCE_LENGTH)
+];
+
+export const createPlacementValidation: ValidationChain[] = [
+  ...placementFieldChains(),
   body('transmitters')
     .optional()
     .custom((value) => Array.isArray(value))
     .withMessage('transmitters must be an array'),
-  ...transmitterChains('transmitters.*'),
-  requiredString('source', MAX_SOURCE_LENGTH)
+  ...transmitterChains('transmitters.*')
 ];
 
 export const placementIdValidation: ValidationChain[] = [
   param('id').isMongoId().withMessage('id must be a valid MongoDB ObjectId')
+];
+
+// Any `transmitters` key fails, even [] or null: transmitters have their own endpoints.
+// The root `onlyKeys` still allows the key, so it is reported once, with this message.
+export const updatePlacementValidation: ValidationChain[] = [
+  ...placementIdValidation,
+  ...placementFieldChains(),
+  body('transmitters')
+    .not()
+    .exists()
+    .withMessage('transmitters cannot be changed here; use the transmitter endpoints')
 ];

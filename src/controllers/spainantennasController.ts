@@ -11,11 +11,15 @@ import catchAsync from '../utils/catchAsync';
 type TransmitterBody = Omit<Transmitter, 'frequencykHz' | 'powerKw'> &
   Partial<Pick<Transmitter, 'frequencykHz' | 'powerKw'>>;
 
-type PlacementBody = Pick<Placement, 'status' | 'siteOperator' | 'source'> & {
+type PlacementFieldsBody = Pick<Placement, 'status' | 'siteOperator' | 'source'> & {
   location: Partial<Location>;
   postcode?: string | null;
-  transmitters?: TransmitterBody[];
 };
+
+type PlacementBody = PlacementFieldsBody & { transmitters?: TransmitterBody[] };
+
+// Placement fields a PUT may replace: everything but transmitters and lastUpdate
+type PlacementFields = Omit<Placement, 'transmitters' | 'lastUpdate'>;
 
 const buildTransmitter = (transmitter: TransmitterBody): Transmitter => ({
   type: transmitter.type,
@@ -25,6 +29,18 @@ const buildTransmitter = (transmitter: TransmitterBody): Transmitter => ({
   broadcaster: transmitter.broadcaster,
   powerKw: transmitter.powerKw ?? null,
   source: transmitter.source
+});
+
+const buildPlacementFields = (body: PlacementFieldsBody): PlacementFields => ({
+  status: body.status,
+  siteOperator: body.siteOperator,
+  location: {
+    lat: body.location.lat ?? null,
+    lon: body.location.lon ?? null,
+    altM: body.location.altM ?? null
+  },
+  postcode: body.postcode ?? null,
+  source: body.source
 });
 
 /**
@@ -44,6 +60,28 @@ const checkValidation = (req: RequestWithUser, res: Response) => {
 };
 
 /**
+ * Sends a Mongoose `ValidationError` as the same 400 shape express-validator produces.
+ * Last guard: the schema rejected what express-validator let through.
+ */
+const sendMongooseValidationError = (res: Response, err: mongoose.Error.ValidationError) =>
+  res.status(400).json({
+    status: 'fail',
+    message: 'Invalid input data',
+    errors: Object.values(err.errors).map((error) => ({
+      type: 'field',
+      msg: error.message,
+      path: error.path,
+      location: 'body'
+    }))
+  });
+
+const sendPlacementNotFound = (res: Response) =>
+  res.status(404).json({
+    status: 'fail',
+    message: 'No placement found with that ID'
+  });
+
+/**
  * Creates a placement, with optional transmitters, from a body already checked by
  * `createPlacementValidation`. The document is built field by field; `lastUpdate` is
  * always stamped by the server.
@@ -59,17 +97,9 @@ export const createPlacement = catchAsync(async (req: RequestWithUser, res: Resp
 
   const body = req.body as PlacementBody;
   const placement: Placement = {
-    status: body.status,
-    siteOperator: body.siteOperator,
-    location: {
-      lat: body.location.lat ?? null,
-      lon: body.location.lon ?? null,
-      altM: body.location.altM ?? null
-    },
-    postcode: body.postcode ?? null,
+    ...buildPlacementFields(body),
     transmitters: (body.transmitters ?? []).map(buildTransmitter),
-    lastUpdate: new Date(),
-    source: body.source
+    lastUpdate: new Date()
   };
 
   try {
@@ -79,21 +109,55 @@ export const createPlacement = catchAsync(async (req: RequestWithUser, res: Resp
       data: { placement: newPlacement }
     });
   } catch (err) {
-    // Last guard: the schema rejected what express-validator let through
     if (err instanceof mongoose.Error.ValidationError) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Invalid input data',
-        errors: Object.values(err.errors).map((error) => ({
-          type: 'field',
-          msg: error.message,
-          path: error.path,
-          location: 'body'
-        }))
-      });
+      return sendMongooseValidationError(res, err);
     }
     throw err;
   }
+});
+
+/**
+ * Replaces the fields of the placement with the `id` path param, from a body already
+ * checked by `updatePlacementValidation`. Transmitters are left untouched (the body cannot
+ * carry them) and `lastUpdate` is stamped by the server. The document is loaded, set and
+ * saved so the schema validators (lat/lon pair included) run.
+ *
+ * Responds 200 with the updated placement, 400 when validation (express-validator or
+ * Mongoose) fails, or 404 when no placement has that id.
+ */
+export const updatePlacement = catchAsync(async (req: RequestWithUser, res: Response) => {
+  const validation = checkValidation(req, res);
+  if (validation !== undefined) {
+    return validation;
+  }
+
+  const placement = await PlacementModel.findById(req.params.id);
+  if (!placement) {
+    return sendPlacementNotFound(res);
+  }
+
+  placement.set({
+    ...buildPlacementFields(req.body as PlacementFieldsBody),
+    lastUpdate: new Date()
+  });
+
+  try {
+    await placement.save();
+  } catch (err) {
+    if (err instanceof mongoose.Error.ValidationError) {
+      return sendMongooseValidationError(res, err);
+    }
+    // Deleted by another request between findById and save
+    if (err instanceof mongoose.Error.DocumentNotFoundError) {
+      return sendPlacementNotFound(res);
+    }
+    throw err;
+  }
+
+  return res.status(200).json({
+    status: 'success',
+    data: { placement }
+  });
 });
 
 /**
@@ -110,10 +174,7 @@ export const deletePlacement = catchAsync(async (req: RequestWithUser, res: Resp
 
   const placement = await PlacementModel.findByIdAndDelete(req.params.id);
   if (!placement) {
-    return res.status(404).json({
-      status: 'fail',
-      message: 'No placement found with that ID'
-    });
+    return sendPlacementNotFound(res);
   }
 
   return res.status(204).send();
