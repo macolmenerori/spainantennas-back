@@ -36,6 +36,10 @@ describe('checkEnvVars', () => {
   });
 
   it.each([
+    ['RATELIMIT_MAXCONNECTIONS', '0'],
+    ['RATELIMIT_MAXCONNECTIONS', '100req'],
+    ['RATELIMIT_WINDOWMS', '-1'],
+    ['RATELIMIT_WINDOWMS', '1.5'],
     ['DEFAULT_PERPAGE', '0'],
     ['DEFAULT_PERPAGE', 'abc'],
     ['MAX_PERPAGE', '-1'],

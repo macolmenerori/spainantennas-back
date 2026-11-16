@@ -24,6 +24,32 @@ import {
  *       scheme: bearer
  *       bearerFormat: JWT
  *       description: JWT token obtained from the opensesame authentication service
+ *   responses:
+ *     TooManyRequests:
+ *       description: >
+ *         Rate limit exceeded (per client IP, on every /api route). The RateLimit,
+ *         RateLimit-Policy and Retry-After headers tell when to retry.
+ *       headers:
+ *         RateLimit:
+ *           schema:
+ *             type: string
+ *             example: '"1000-in-15min"; r=0; t=540'
+ *         RateLimit-Policy:
+ *           schema:
+ *             type: string
+ *             example: '"1000-in-15min"; q=1000; w=900; pk=:MTJjYTE3YjQ5YWYy:'
+ *         Retry-After:
+ *           description: Seconds until the window resets
+ *           schema:
+ *             type: integer
+ *             example: 540
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ErrorResponse'
+ *           example:
+ *             status: fail
+ *             message: Too many requests, please try again later
  *   schemas:
  *     Location:
  *       type: object
@@ -409,6 +435,8 @@ const router = express.Router();
  *                   msg: "technology must be one of: AM-LW, AM-MW, FM, TDT, DAB+"
  *                   path: technology
  *                   location: query
+ *       429:
+ *         $ref: '#/components/responses/TooManyRequests'
  *       500:
  *         description: Internal server error
  *         content:
@@ -499,6 +527,8 @@ const router = express.Router();
  *             example:
  *               status: fail
  *               message: Request body too large
+ *       429:
+ *         $ref: '#/components/responses/TooManyRequests'
  *       500:
  *         description: Internal server error
  *         content:
@@ -618,6 +648,8 @@ router
  *             example:
  *               status: fail
  *               message: Request body too large
+ *       429:
+ *         $ref: '#/components/responses/TooManyRequests'
  *       500:
  *         description: Internal server error
  *         content:
@@ -689,6 +721,8 @@ router
  *             example:
  *               status: fail
  *               message: No placement found with that ID
+ *       429:
+ *         $ref: '#/components/responses/TooManyRequests'
  *       500:
  *         description: Internal server error
  *         content:

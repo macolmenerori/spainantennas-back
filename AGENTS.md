@@ -12,10 +12,17 @@ Express + TypeScript API over MongoDB (Mongoose) serving radio/TV antenna sites 
 - Single `tsconfig.json`: `module: nodenext` (emits CJS because package.json has no `"type": "module"`), `target: es2025` (`RegExp.escape` available), `isolatedModules`, `noImplicitOverride`, `noFallthroughCasesInSwitch`. No `verbatimModuleSyntax` (rejects `import` in CJS-mode files). No source maps. No path alias yet (tsc doesn't rewrite `@/` imports; use relative imports).
 - Tests are co-located as `src/**/*.test.ts` and excluded from `tsconfig.json`, so `tsc` never emits them (and `pnpm types` doesn't check them; neither does it check `scripts/`).
 - `pnpm-workspace.yaml` `allowBuilds` lists packages allowed (or explicitly denied) to run install scripts; esbuild (via tsx) is denied, its binary works without it.
-- Express 5, Mongoose, express-validator, helmet, cors (origin whitelist), express-rate-limit on `/api`, `@exortek/express-mongo-sanitize`, compression, multer (import upload). Wired so far: cors, `express.json({ limit: '1mb' })`, express-validator; the rest is still to add (in its own change, not bundled with endpoints).
-- `dotenv` loads `config.env` (gitignored); keep `config.env.example` (committed) updated. `checkEnvVars()` exits on missing vars, on a non-positive-integer `AUTH_TIMEOUT_MS`, `DEFAULT_PERPAGE` or `MAX_PERPAGE`, and when `DEFAULT_PERPAGE > MAX_PERPAGE`.
+- Express 5, Mongoose, express-validator, helmet, cors (origin whitelist), express-rate-limit on `/api`, `@exortek/express-mongo-sanitize`, compression, multer (import upload). All wired except multer (comes with import). Middleware order in `app.ts`, keep it:
+  1. `app.set('trust proxy', 1)`: Heroku's router is the one proxy, so `req.ip` is the real client (rate-limit key). Hard-coded, Heroku is the only target.
+  2. cors (+ `app.options`): first, so preflights end before the limiter and 429s carry CORS headers. `exposedHeaders: RateLimit, RateLimit-Policy, Retry-After`.
+  3. `helmet()` with defaults (CSP on).
+  4. `rateLimit` on `/api` only (`/healthcheck` exempt), memory store (single dyno), `limit`/`windowMs` from `RATELIMIT_*`, `standardHeaders: 'draft-8'`, `legacyHeaders: false`, custom handler -> 429 JSON `{ status: "fail", message: "Too many requests, please try again later" }`.
+  5. `express.json({ limit: '1mb' })`. No `express.urlencoded` (JSON-only API).
+  6. `mongoSanitize({ patterns: [/\$/g], replaceWith: '_' })`: defense in depth after the body parser. Silently replaces `$` with `_` in body and query keys and values (`$where` key -> `_where`, then rejected by `onlyKeys`). Control chars (newlines) are kept. Params are not sanitized (every `:id` is `isMongoId`-validated).
+  7. `compression()` defaults.
+- `dotenv` loads `config.env` (gitignored) at the very top of `server.ts`, before importing `app` (which reads env when it loads); keep `config.env.example` (committed) updated. `checkEnvVars()` exits on missing vars, on a non-positive-integer `AUTH_TIMEOUT_MS`, `RATELIMIT_MAXCONNECTIONS`, `RATELIMIT_WINDOWMS`, `DEFAULT_PERPAGE` or `MAX_PERPAGE`, and when `DEFAULT_PERPAGE > MAX_PERPAGE`.
 - ESLint (flat config, typescript-eslint, prettier, simple-import-sort) + Prettier.
-- Vitest, unit tests only (mock Mongoose models and `fetch`; no real DB). `vitest.config.mts` (`.mts` because the package is CJS) restores mocks, stubbed globals and envs after each test. In tests that import Express's `Response` type, build fetch responses with `new globalThis.Response(...)`.
+- Vitest, no real DB (mock Mongoose models and `fetch`). Unit tests call handlers with fake req/res; `src/app.test.ts` drives the real `app` in-process with supertest (middleware, wiring), stubbing env then `vi.resetModules()` + dynamic `import('./app')` because `app.ts` reads env when it loads. `vitest.config.mts` (`.mts` because the package is CJS) restores mocks, stubbed globals and envs after each test. In tests that import Express's `Response` type, build fetch responses with `new globalThis.Response(...)`.
 - swagger-jsdoc: `@openapi` JSDoc in `src/routes/*.ts`, generated to an OpenAPI file by `scripts/generateOpenapi.ts`.
 
 ## Commands (rainlogger style; missing ones still to create)
@@ -83,7 +90,7 @@ Responses:
 
 - List: `{ status: "success", page, perPage, totalPages, total, results: [...] }`
 - Single: `{ status: "success", data: { placement | transmitter } }`
-- Error: `{ status: "fail" | "error", message, errors? }` (400 validation or malformed JSON, 401 auth, 404, 405, 413 body over 1 MB, 500, 503 auth service unavailable). 4xx use `fail`, 5xx use `error` (`catchAsync` and `errorHandler` included).
+- Error: `{ status: "fail" | "error", message, errors? }` (400 validation or malformed JSON, 401 auth, 404, 405, 413 body over 1 MB, 429 rate limit, 500, 503 auth service unavailable). 4xx use `fail`, 5xx use `error` (`catchAsync` and `errorHandler` included).
 - Validation 400: `{ status: "fail", message: "Invalid input data", errors }`, `errors` from `validationResult().array()`. A Mongoose `ValidationError` on save is mapped to the same shape (`type`, `msg`, `path`, `location`).
 - Create: 201 with the single shape.
 

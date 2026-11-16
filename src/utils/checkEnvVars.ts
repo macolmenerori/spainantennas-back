@@ -35,9 +35,12 @@ const checkEnvVars = (): boolean => {
     return true;
   }
 
-  const notPositive = ['DEFAULT_PERPAGE', 'MAX_PERPAGE'].filter(
-    (envVar) => !isPositiveInteger(process.env[envVar]!)
-  );
+  const notPositive = [
+    'RATELIMIT_MAXCONNECTIONS',
+    'RATELIMIT_WINDOWMS',
+    'DEFAULT_PERPAGE',
+    'MAX_PERPAGE'
+  ].filter((envVar) => !isPositiveInteger(process.env[envVar]!));
   if (notPositive.length > 0) {
     console.error(`${notPositive.join(', ')} must be positive integers`);
     return true;
