@@ -4,11 +4,13 @@ import { protect } from '../controllers/authController';
 import {
   createPlacement,
   deletePlacement,
+  getPlacements,
   updatePlacement
 } from '../controllers/spainantennasController';
 import { methodNotAllowed } from '../utils/methodNotAllowed';
 import {
   createPlacementValidation,
+  getPlacementsValidation,
   placementIdValidation,
   updatePlacementValidation
 } from '../validations/spainantennas.validations';
@@ -205,6 +207,49 @@ import {
  *           description: Set by the server on every change
  *         source:
  *           type: string
+ *     PlacementSummary:
+ *       description: Placement without transmitters (fields=summary)
+ *       type: object
+ *       properties:
+ *         _id:
+ *           type: string
+ *           description: MongoDB ObjectId
+ *           example: "507f1f77bcf86cd799439011"
+ *         status:
+ *           type: string
+ *           enum: [active, inactive, unknown]
+ *         siteOperator:
+ *           type: string
+ *         location:
+ *           $ref: '#/components/schemas/Location'
+ *         postcode:
+ *           type: string
+ *           nullable: true
+ *         lastUpdate:
+ *           type: string
+ *           format: date-time
+ *         source:
+ *           type: string
+ *     ListMeta:
+ *       type: object
+ *       properties:
+ *         status:
+ *           type: string
+ *           example: success
+ *         page:
+ *           type: integer
+ *           example: 1
+ *         perPage:
+ *           type: integer
+ *           description: Page size actually used (requested value capped at MAX_PERPAGE)
+ *           example: 20
+ *         totalPages:
+ *           type: integer
+ *           description: 0 when nothing matches
+ *           example: 3
+ *         total:
+ *           type: integer
+ *           example: 42
  *     ErrorResponse:
  *       type: object
  *       properties:
@@ -250,6 +295,129 @@ const router = express.Router();
 /**
  * @openapi
  * /placement:
+ *   get:
+ *     summary: List placements
+ *     description: >
+ *       Public, paginated list sorted by _id. Filters are ANDed. Comma lists match any of
+ *       their values (max 100 values). Text filters are case- and accent-insensitive
+ *       partial matches (vowel accents, n/ñ, c/ç) and take a single term (commas are
+ *       literal). Transmitter filters (type, technology, stationName, broadcaster) must
+ *       all match the same transmitter; matching placements return all their transmitters.
+ *       Each parameter may appear once and cannot be empty; unknown parameters are
+ *       rejected. A single placement is GET /placement?id=... (list shape, empty results
+ *       when not found).
+ *     tags:
+ *       - Placement
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *       - in: query
+ *         name: perPage
+ *         description: Defaults to DEFAULT_PERPAGE; values above MAX_PERPAGE are capped
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *       - in: query
+ *         name: fields
+ *         description: summary leaves transmitters out of each placement
+ *         schema:
+ *           type: string
+ *           enum: [summary]
+ *       - in: query
+ *         name: id
+ *         description: Placement ObjectId, or a comma-separated list of them
+ *         schema:
+ *           type: string
+ *           example: "507f1f77bcf86cd799439011"
+ *       - in: query
+ *         name: status
+ *         description: Comma-separated list of active, inactive, unknown
+ *         schema:
+ *           type: string
+ *           example: active,unknown
+ *       - in: query
+ *         name: siteOperator
+ *         description: Partial match, case- and accent-insensitive
+ *         schema:
+ *           type: string
+ *           maxLength: 200
+ *           example: cellnex
+ *       - in: query
+ *         name: postcode
+ *         description: 5-digit postcode, or a comma-separated list of them (exact match)
+ *         schema:
+ *           type: string
+ *           example: "28001,28002"
+ *       - in: query
+ *         name: type
+ *         description: Comma-separated list of TV, radio
+ *         schema:
+ *           type: string
+ *           example: radio
+ *       - in: query
+ *         name: technology
+ *         description: Comma-separated list of AM-LW, AM-MW, FM, TDT, DAB+ (encode + as %2B)
+ *         schema:
+ *           type: string
+ *           example: FM,DAB%2B
+ *       - in: query
+ *         name: stationName
+ *         description: Partial match, case- and accent-insensitive
+ *         schema:
+ *           type: string
+ *           maxLength: 200
+ *           example: espana
+ *       - in: query
+ *         name: broadcaster
+ *         description: Partial match, case- and accent-insensitive
+ *         schema:
+ *           type: string
+ *           maxLength: 200
+ *           example: rtve
+ *     responses:
+ *       200:
+ *         description: Page of placements (full, or summary with fields=summary)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/ListMeta'
+ *                 - type: object
+ *                   properties:
+ *                     results:
+ *                       type: array
+ *                       items:
+ *                         oneOf:
+ *                           - $ref: '#/components/schemas/Placement'
+ *                           - $ref: '#/components/schemas/PlacementSummary'
+ *       400:
+ *         description: Invalid query (unknown, repeated or empty parameter, bad value)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationErrorResponse'
+ *             example:
+ *               status: fail
+ *               message: Invalid input data
+ *               errors:
+ *                 - type: field
+ *                   value: FM,XYZ
+ *                   msg: "technology must be one of: AM-LW, AM-MW, FM, TDT, DAB+"
+ *                   path: technology
+ *                   location: query
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: error
+ *               message: Internal server error
  *   post:
  *     summary: Create a placement
  *     description: >
@@ -352,8 +520,9 @@ const router = express.Router();
  */
 router
   .route('/placement')
+  .get(getPlacementsValidation, getPlacements)
   .post(protect, createPlacementValidation, createPlacement)
-  .all(methodNotAllowed(['POST']));
+  .all(methodNotAllowed(['GET', 'POST']));
 
 /**
  * @openapi

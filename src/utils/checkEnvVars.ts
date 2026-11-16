@@ -1,5 +1,7 @@
 /* eslint-disable no-console */
 
+const isPositiveInteger = (value: string): boolean => /^[1-9]\d*$/.test(value);
+
 const checkEnvVars = (): boolean => {
   const requiredEnvVars = [
     'NODE_ENV',
@@ -9,7 +11,9 @@ const checkEnvVars = (): boolean => {
     'AUTH_TIMEOUT_MS',
     'RATELIMIT_MAXCONNECTIONS',
     'RATELIMIT_WINDOWMS',
-    'CORS_WHITELIST'
+    'CORS_WHITELIST',
+    'DEFAULT_PERPAGE',
+    'MAX_PERPAGE'
   ];
 
   const missingEnvVars: string[] = [];
@@ -26,8 +30,21 @@ const checkEnvVars = (): boolean => {
   }
 
   // AbortSignal.timeout() throws on anything but a non-negative integer
-  if (!/^[1-9]\d*$/.test(process.env.AUTH_TIMEOUT_MS!)) {
+  if (!isPositiveInteger(process.env.AUTH_TIMEOUT_MS!)) {
     console.error('AUTH_TIMEOUT_MS must be a positive integer (milliseconds)');
+    return true;
+  }
+
+  const notPositive = ['DEFAULT_PERPAGE', 'MAX_PERPAGE'].filter(
+    (envVar) => !isPositiveInteger(process.env[envVar]!)
+  );
+  if (notPositive.length > 0) {
+    console.error(`${notPositive.join(', ')} must be positive integers`);
+    return true;
+  }
+
+  if (Number(process.env.DEFAULT_PERPAGE) > Number(process.env.MAX_PERPAGE)) {
+    console.error('DEFAULT_PERPAGE cannot be greater than MAX_PERPAGE');
     return true;
   }
 

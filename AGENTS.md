@@ -12,8 +12,8 @@ Express + TypeScript API over MongoDB (Mongoose) serving radio/TV antenna sites 
 - Single `tsconfig.json`: `module: nodenext` (emits CJS because package.json has no `"type": "module"`), `target: es2025` (`RegExp.escape` available), `isolatedModules`, `noImplicitOverride`, `noFallthroughCasesInSwitch`. No `verbatimModuleSyntax` (rejects `import` in CJS-mode files). No source maps. No path alias yet (tsc doesn't rewrite `@/` imports; use relative imports).
 - Tests are co-located as `src/**/*.test.ts` and excluded from `tsconfig.json`, so `tsc` never emits them (and `pnpm types` doesn't check them; neither does it check `scripts/`).
 - `pnpm-workspace.yaml` `allowBuilds` lists packages allowed (or explicitly denied) to run install scripts; esbuild (via tsx) is denied, its binary works without it.
-- Express 5, Mongoose, express-validator, helmet, cors (origin whitelist), express-rate-limit on `/api`, `@exortek/express-mongo-sanitize`, compression, multer (import upload). Wired so far: cors, `express.json({ limit: '1mb' })`, express-validator; the rest is still to add.
-- `dotenv` loads `config.env` (gitignored); keep `config.env.example` (committed) updated. `checkEnvVars()` exits on missing vars (and on a non-positive-integer `AUTH_TIMEOUT_MS`).
+- Express 5, Mongoose, express-validator, helmet, cors (origin whitelist), express-rate-limit on `/api`, `@exortek/express-mongo-sanitize`, compression, multer (import upload). Wired so far: cors, `express.json({ limit: '1mb' })`, express-validator; the rest is still to add (in its own change, not bundled with endpoints).
+- `dotenv` loads `config.env` (gitignored); keep `config.env.example` (committed) updated. `checkEnvVars()` exits on missing vars, on a non-positive-integer `AUTH_TIMEOUT_MS`, `DEFAULT_PERPAGE` or `MAX_PERPAGE`, and when `DEFAULT_PERPAGE > MAX_PERPAGE`.
 - ESLint (flat config, typescript-eslint, prettier, simple-import-sort) + Prettier.
 - Vitest, unit tests only (mock Mongoose models and `fetch`; no real DB). `vitest.config.mts` (`.mts` because the package is CJS) restores mocks, stubbed globals and envs after each test. In tests that import Express's `Response` type, build fetch responses with `new globalThis.Response(...)`.
 - swagger-jsdoc: `@openapi` JSDoc in `src/routes/*.ts`, generated to an OpenAPI file by `scripts/generateOpenapi.ts`.
@@ -72,9 +72,12 @@ Filters:
 
 - `/placement`: `id`, `status`, `siteOperator`, `postcode`, and transmitter filters `type`, `technology`, `stationName`, `broadcaster`. No location/geo filter. Transmitter filters combine in one `$elemMatch` (same transmitter must match); matching placements return **all** their transmitters.
 - `/transmitter`: `id` (placement id), `broadcaster`, `stationName`, `type`, `technology`. Each item: transmitter fields + `_id`, `placementId`, `placement: {status, location, postcode}`.
-- Text filters (`siteOperator`, `stationName`, `broadcaster`) are escaped-regex, case- and accent-insensitive partial matches. `postcode` exact. Enums exact, comma lists allowed (`technology=FM,DAB%2B`). Single placement = `GET /placement?id=...`.
+- Text filters (`siteOperator`, `stationName`, `broadcaster`) are escaped-regex, case- and accent-insensitive partial matches (`accentInsensitiveRegex` in `src/utils/filters.ts`: vowels <-> acute/grave/circumflex/diaeresis/tilde forms, `n` <-> `ñ`, `c` <-> `ç`, both ways). Single term, trimmed, 1-`MAX_NAME_LENGTH` chars; commas are literal.
+- Comma lists (`id`, `postcode`, enums): `$in`, items trimmed, no empty items, at most `MAX_FILTER_LIST_ITEMS` (100, `src/utils/consts.ts`), each item validated (ObjectId, `POSTCODE_REGEX`, enum constants). `postcode` matches exactly. A `+` must be sent as `%2B` (`technology=FM,DAB%2B`). Single placement = `GET /placement?id=...` (list shape; no match = 200 with empty `results`, never 404).
+- Query strictness: unknown query parameters -> 400 (`Unknown query parameter(s): ...`). Each parameter may appear once (a repeated key -> 400) and cannot be empty. `fields` accepts only `summary` (projection `{ transmitters: 0 }`).
+- Express 5 re-parses `req.query` on every access, so express-validator sanitizers don't stick: controllers read query values with `matchedData(req, { locations: ['query'] })`.
 
-Pagination (all GETs except `/export`): `page` default 1, `perPage` default `DEFAULT_PERPAGE`, capped at `MAX_PERPAGE`. Stable default sort by `_id`.
+Pagination (all GETs except `/export`, helpers in `src/utils/pagination.ts`): `page` default 1, `perPage` default `DEFAULT_PERPAGE`; both positive integers (else 400). `perPage` over `MAX_PERPAGE` is silently capped and the response echoes the capped value. A page past the end returns 200 with empty `results`; `totalPages` is 0 when nothing matches. Stable default sort by `_id`. Lists use `find(...).lean()` and `countDocuments` in parallel.
 
 Responses:
 

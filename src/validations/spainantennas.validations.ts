@@ -1,4 +1,4 @@
-import { body, param, ValidationChain } from 'express-validator';
+import { body, param, query, ValidationChain } from 'express-validator';
 
 import {
   Location,
@@ -12,6 +12,8 @@ import {
   TRANSMITTER_TECHNOLOGIES,
   TRANSMITTER_TYPES
 } from '../models/spainantennasTypes';
+import { MAX_FILTER_LIST_ITEMS } from '../utils/consts';
+import { splitList } from '../utils/filters';
 
 // Keys accepted in each body object. Anything else is rejected, mirroring the schema's
 // `strict: 'throw'`. `lastUpdate` is accepted but ignored (the server stamps it). `_id` is
@@ -49,14 +51,18 @@ const label = (field: string): string => field.split('.').pop()!;
 /**
  * Custom validator that fails when the object has keys outside `allowed`.
  * Must run after the value is known to be a plain object.
+ *
+ * @param noun - What a key is called in the error message ('field', 'query parameter')
  */
-const onlyKeys = (allowed: readonly string[]) => (value: Record<string, unknown>) => {
-  const unknown = Object.keys(value).filter((key) => !allowed.includes(key));
-  if (unknown.length > 0) {
-    throw new Error(`Unknown field(s): ${unknown.join(', ')}`);
-  }
-  return true;
-};
+const onlyKeys =
+  (allowed: readonly string[], noun = 'field') =>
+  (value: Record<string, unknown>) => {
+    const unknown = Object.keys(value).filter((key) => !allowed.includes(key));
+    if (unknown.length > 0) {
+      throw new Error(`Unknown ${noun}(s): ${unknown.join(', ')}`);
+    }
+    return true;
+  };
 
 const requiredString = (field: string, maxLength: number): ValidationChain =>
   body(field)
@@ -184,4 +190,113 @@ export const updatePlacementValidation: ValidationChain[] = [
     .not()
     .exists()
     .withMessage('transmitters cannot be changed here; use the transmitter endpoints')
+];
+
+// Query parameters accepted by GET /placement. Anything else is rejected.
+const PLACEMENT_QUERY_KEYS = [
+  'page',
+  'perPage',
+  'fields',
+  'id',
+  'status',
+  'siteOperator',
+  'postcode',
+  'type',
+  'technology',
+  'stationName',
+  'broadcaster'
+] as const;
+
+export const PLACEMENT_FIELDS_VALUES = ['summary'] as const;
+
+// Same check as isMongoId: 24 hex characters
+const OBJECT_ID_REGEX = /^[0-9a-f]{24}$/i;
+
+/**
+ * Optional query parameter given at most once (a repeated key arrives as an array).
+ */
+const singleQueryValue = (field: string): ValidationChain =>
+  query(field).optional().isString().withMessage(`${field} must be given only once`).bail();
+
+const paginationQuery = (field: string): ValidationChain =>
+  singleQueryValue(field)
+    .isInt({ min: 1, max: Number.MAX_SAFE_INTEGER })
+    .withMessage(`${field} must be a positive integer`)
+    .bail()
+    .toInt();
+
+/**
+ * Comma-separated list (`a,b,c`): non-empty, no empty items, at most
+ * `MAX_FILTER_LIST_ITEMS` items, each passing `isValidItem`. Sanitized to an array of
+ * trimmed items.
+ */
+const listQuery = (
+  field: string,
+  isValidItem: (item: string) => boolean,
+  itemMessage: string
+): ValidationChain =>
+  singleQueryValue(field)
+    .notEmpty()
+    .withMessage(`${field} cannot be empty`)
+    .bail()
+    .custom((value: string) => {
+      const items = splitList(value);
+      if (items.length > MAX_FILTER_LIST_ITEMS) {
+        throw new Error(`${field} accepts at most ${MAX_FILTER_LIST_ITEMS} values`);
+      }
+      if (items.includes('')) {
+        throw new Error(`${field} cannot contain empty values`);
+      }
+      if (!items.every(isValidItem)) {
+        throw new Error(itemMessage);
+      }
+      return true;
+    })
+    .bail()
+    .customSanitizer(splitList);
+
+const enumListQuery = (field: string, values: readonly string[]): ValidationChain =>
+  listQuery(
+    field,
+    (item) => values.includes(item),
+    `${field} must be one of: ${values.join(', ')}`
+  );
+
+// Single partial-match term: commas are part of the text, not separators
+const textQuery = (field: string): ValidationChain =>
+  singleQueryValue(field)
+    .trim()
+    .notEmpty()
+    .withMessage(`${field} cannot be empty`)
+    .bail()
+    .isLength({ max: MAX_NAME_LENGTH })
+    .withMessage(`${field} must be at most ${MAX_NAME_LENGTH} characters`);
+
+/**
+ * GET /placement query. Express 5 re-parses `req.query` on every access, so sanitized
+ * values (ints, trimmed text, split lists) must be read with `matchedData()`.
+ */
+export const getPlacementsValidation: ValidationChain[] = [
+  query().custom(onlyKeys(PLACEMENT_QUERY_KEYS, 'query parameter')),
+  paginationQuery('page'),
+  paginationQuery('perPage'),
+  singleQueryValue('fields')
+    .isIn(PLACEMENT_FIELDS_VALUES)
+    .withMessage(`fields must be one of: ${PLACEMENT_FIELDS_VALUES.join(', ')}`),
+  listQuery(
+    'id',
+    (item) => OBJECT_ID_REGEX.test(item),
+    'id must be a valid MongoDB ObjectId (or a comma-separated list of them)'
+  ),
+  enumListQuery('status', PLACEMENT_STATUSES),
+  textQuery('siteOperator'),
+  listQuery(
+    'postcode',
+    (item) => POSTCODE_REGEX.test(item),
+    'postcode must be 5 digits (or a comma-separated list of them)'
+  ),
+  enumListQuery('type', TRANSMITTER_TYPES),
+  enumListQuery('technology', TRANSMITTER_TECHNOLOGIES),
+  textQuery('stationName'),
+  textQuery('broadcaster')
 ];
