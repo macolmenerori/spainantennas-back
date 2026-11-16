@@ -1,11 +1,12 @@
 import { Request } from 'express';
-import { FieldValidationError, validationResult } from 'express-validator';
+import { FieldValidationError, matchedData, validationResult } from 'express-validator';
 import { describe, expect, it } from 'vitest';
 
 import { MAX_NAME_LENGTH, MAX_SOURCE_LENGTH } from '../models/spainantennasTypes';
 
 import {
   createPlacementValidation,
+  getPlacementsValidation,
   placementIdValidation,
   updatePlacementValidation
 } from './spainantennas.validations';
@@ -363,5 +364,152 @@ describe('updatePlacementValidation', () => {
         expect.objectContaining({ path: 'status', location: 'body' })
       ])
     );
+  });
+});
+
+describe('getPlacementsValidation', () => {
+  const ID = '507f1f77bcf86cd799439011';
+
+  const validateQuery = async (query: Record<string, unknown>) => {
+    const req = { query } as unknown as Request;
+    for (const chain of getPlacementsValidation) {
+      await chain.run(req);
+    }
+    return {
+      errors: validationResult(req).array() as FieldValidationError[],
+      data: matchedData(req, { locations: ['query'] })
+    };
+  };
+
+  const expectQueryError = async (query: Record<string, unknown>, path: string, msg: string) => {
+    const { errors } = await validateQuery(query);
+    expect(errors).toEqual([expect.objectContaining({ path, location: 'query', msg })]);
+  };
+
+  it('accepts an empty query', async () => {
+    expect((await validateQuery({})).errors).toEqual([]);
+  });
+
+  it('accepts every parameter and sanitizes the values', async () => {
+    const { errors, data } = await validateQuery({
+      page: '2',
+      perPage: '500',
+      fields: 'summary',
+      id: `${ID}, 507f1f77bcf86cd799439012`,
+      status: 'active,unknown',
+      siteOperator: '  Cellnex ',
+      postcode: '28001',
+      type: 'radio',
+      technology: 'FM,DAB+',
+      stationName: ' España ',
+      broadcaster: 'Cadena SER, S.A.'
+    });
+
+    expect(errors).toEqual([]);
+    expect(data).toMatchObject({
+      page: 2,
+      perPage: 500,
+      fields: 'summary',
+      id: [ID, '507f1f77bcf86cd799439012'],
+      status: ['active', 'unknown'],
+      siteOperator: 'Cellnex',
+      postcode: ['28001'],
+      type: ['radio'],
+      technology: ['FM', 'DAB+'],
+      stationName: 'España',
+      broadcaster: 'Cadena SER, S.A.'
+    });
+  });
+
+  it('rejects unknown parameters', async () => {
+    await expectQueryError(
+      { technologie: 'FM', foo: '1' },
+      '',
+      'Unknown query parameter(s): technologie, foo'
+    );
+  });
+
+  it('rejects a repeated parameter', async () => {
+    await expectQueryError(
+      { status: ['active', 'inactive'] },
+      'status',
+      'status must be given only once'
+    );
+  });
+
+  it.each(['status', 'id', 'postcode', 'stationName', 'fields'])(
+    'rejects an empty %s',
+    async (key) => {
+      const { errors } = await validateQuery({ [key]: '' });
+      expect(errors).toEqual([expect.objectContaining({ path: key, location: 'query' })]);
+    }
+  );
+
+  it('rejects a whitespace-only text filter', async () => {
+    await expectQueryError({ broadcaster: '   ' }, 'broadcaster', 'broadcaster cannot be empty');
+  });
+
+  describe('pagination', () => {
+    it.each(['0', '-1', 'abc', '1.5', ''])('rejects page=%j', async (page) => {
+      await expectQueryError({ page }, 'page', 'page must be a positive integer');
+    });
+
+    it.each(['0', '2x', String(Number.MAX_SAFE_INTEGER + 2)])(
+      'rejects perPage=%j',
+      async (perPage) => {
+        await expectQueryError({ perPage }, 'perPage', 'perPage must be a positive integer');
+      }
+    );
+  });
+
+  describe('lists', () => {
+    it.each(['FM,,TDT', 'FM,', ',FM'])('rejects empty items in %j', async (technology) => {
+      await expectQueryError(
+        { technology },
+        'technology',
+        'technology cannot contain empty values'
+      );
+    });
+
+    it('accepts 100 items and rejects 101', async () => {
+      const list = (n: number) => Array.from({ length: n }, () => '28001').join(',');
+      expect((await validateQuery({ postcode: list(100) })).errors).toEqual([]);
+      await expectQueryError(
+        { postcode: list(101) },
+        'postcode',
+        'postcode accepts at most 100 values'
+      );
+    });
+
+    it('accepts duplicates', async () => {
+      expect((await validateQuery({ type: 'TV,TV' })).errors).toEqual([]);
+    });
+
+    it.each([
+      [
+        'id',
+        `${ID},abc`,
+        'id must be a valid MongoDB ObjectId (or a comma-separated list of them)'
+      ],
+      ['postcode', '28001,2800', 'postcode must be 5 digits (or a comma-separated list of them)'],
+      ['status', 'active,deleted', 'status must be one of: active, inactive, unknown'],
+      ['type', 'tv', 'type must be one of: TV, radio'],
+      // An unencoded + arrives as a space: 'DAB+' must be sent as DAB%2B
+      ['technology', 'FM,DAB ', 'technology must be one of: AM-LW, AM-MW, FM, TDT, DAB+']
+    ])('rejects an invalid %s item', async (key, value, msg) => {
+      await expectQueryError({ [key]: value }, key, msg);
+    });
+  });
+
+  it('rejects a text filter over 200 characters', async () => {
+    await expectQueryError(
+      { stationName: 'a'.repeat(MAX_NAME_LENGTH + 1) },
+      'stationName',
+      `stationName must be at most ${MAX_NAME_LENGTH} characters`
+    );
+  });
+
+  it('rejects fields other than summary', async () => {
+    await expectQueryError({ fields: 'full' }, 'fields', 'fields must be one of: summary');
   });
 });

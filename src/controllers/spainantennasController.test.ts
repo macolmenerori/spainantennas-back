@@ -1,24 +1,39 @@
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import PlacementModel from '../models/spainantennasModel';
 import { RequestWithUser } from '../models/userTypes';
+import { accentInsensitiveRegex } from '../utils/filters';
 import {
   createPlacementValidation,
+  getPlacementsValidation,
   placementIdValidation,
   updatePlacementValidation
 } from '../validations/spainantennas.validations';
 
-import { createPlacement, deletePlacement, updatePlacement } from './spainantennasController';
+import {
+  createPlacement,
+  deletePlacement,
+  getPlacements,
+  updatePlacement
+} from './spainantennasController';
 
 vi.mock('../models/spainantennasModel', () => ({
-  default: { create: vi.fn(), findById: vi.fn(), findByIdAndDelete: vi.fn() }
+  default: {
+    create: vi.fn(),
+    find: vi.fn(),
+    countDocuments: vi.fn(),
+    findById: vi.fn(),
+    findByIdAndDelete: vi.fn()
+  }
 }));
 
 const createMock = vi.mocked(PlacementModel.create);
 const findByIdMock = vi.mocked(PlacementModel.findById);
 const findByIdAndDeleteMock = vi.mocked(PlacementModel.findByIdAndDelete);
+const findMock = vi.mocked(PlacementModel.find);
+const countDocumentsMock = vi.mocked(PlacementModel.countDocuments);
 
 const NOW = new Date('2026-11-13T10:00:00.000Z');
 
@@ -419,6 +434,161 @@ describe('updatePlacement', () => {
     doc.save.mockRejectedValue(new Error('connection lost'));
 
     const res = await runUpdate(ID, minimalBody());
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ status: 'error', message: 'Internal server error' });
+  });
+});
+
+/**
+ * Runs the GET validation, then getPlacements, and resolves once it responds.
+ */
+const runGet = async (query: Record<string, unknown>) => {
+  const req = { query } as unknown as Request;
+  for (const chain of getPlacementsValidation) {
+    await chain.run(req);
+  }
+  return new Promise<Response>((resolve) => {
+    const res = {} as Response;
+    res.status = vi.fn().mockReturnValue(res);
+    res.json = vi.fn().mockImplementation(() => {
+      resolve(res);
+      return res;
+    });
+    getPlacements(req, res, vi.fn());
+  });
+};
+
+describe('getPlacements', () => {
+  const placement = { _id: '507f1f77bcf86cd799439011', status: 'active', transmitters: [] };
+
+  // Chainable stand-in for the Mongoose query returned by find()
+  const query = {
+    sort: vi.fn(),
+    skip: vi.fn(),
+    limit: vi.fn(),
+    lean: vi.fn()
+  };
+
+  beforeEach(() => {
+    vi.stubEnv('DEFAULT_PERPAGE', '20');
+    vi.stubEnv('MAX_PERPAGE', '100');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    query.sort.mockReturnValue(query);
+    query.skip.mockReturnValue(query);
+    query.limit.mockReturnValue(query);
+    query.lean.mockResolvedValue([placement]);
+    findMock.mockReset();
+    findMock.mockReturnValue(query as never);
+    countDocumentsMock.mockReset();
+    countDocumentsMock.mockResolvedValue(41 as never);
+  });
+
+  it('responds 400 without querying the DB when the query is invalid', async () => {
+    const res = await runGet({ foo: '1' });
+
+    expect(findMock).not.toHaveBeenCalled();
+    expect(countDocumentsMock).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'fail',
+        message: 'Invalid input data',
+        errors: [expect.objectContaining({ msg: 'Unknown query parameter(s): foo' })]
+      })
+    );
+  });
+
+  it('lists the first page with defaults, sorted by _id', async () => {
+    const res = await runGet({});
+
+    expect(findMock).toHaveBeenCalledWith({}, {});
+    expect(countDocumentsMock).toHaveBeenCalledWith({});
+    expect(query.sort).toHaveBeenCalledWith({ _id: 1 });
+    expect(query.skip).toHaveBeenCalledWith(0);
+    expect(query.limit).toHaveBeenCalledWith(20);
+    expect(query.lean).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'success',
+      page: 1,
+      perPage: 20,
+      totalPages: 3,
+      total: 41,
+      results: [placement]
+    });
+  });
+
+  it('caps perPage and echoes the capped value', async () => {
+    const res = await runGet({ page: '2', perPage: '500' });
+
+    expect(query.skip).toHaveBeenCalledWith(100);
+    expect(query.limit).toHaveBeenCalledWith(100);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 2, perPage: 100, totalPages: 1 })
+    );
+  });
+
+  it('builds the filter from the sanitized query', async () => {
+    await runGet({
+      id: '507f1f77bcf86cd799439011',
+      status: 'active,unknown',
+      siteOperator: ' cellnex ',
+      postcode: '28001,28002',
+      type: 'radio',
+      technology: 'FM,DAB+',
+      stationName: 'espana',
+      broadcaster: 'rtve'
+    });
+
+    const filter = {
+      _id: { $in: ['507f1f77bcf86cd799439011'] },
+      status: { $in: ['active', 'unknown'] },
+      siteOperator: accentInsensitiveRegex('cellnex'),
+      postcode: { $in: ['28001', '28002'] },
+      transmitters: {
+        $elemMatch: {
+          type: { $in: ['radio'] },
+          technology: { $in: ['FM', 'DAB+'] },
+          stationName: accentInsensitiveRegex('espana'),
+          broadcaster: accentInsensitiveRegex('rtve')
+        }
+      }
+    };
+    expect(findMock).toHaveBeenCalledWith(filter, {});
+    expect(countDocumentsMock).toHaveBeenCalledWith(filter);
+  });
+
+  it('leaves transmitters out with fields=summary', async () => {
+    await runGet({ fields: 'summary', technology: 'TDT' });
+
+    expect(findMock).toHaveBeenCalledWith(
+      { transmitters: { $elemMatch: { technology: { $in: ['TDT'] } } } },
+      { transmitters: 0 }
+    );
+  });
+
+  it('responds 200 with empty results when nothing matches', async () => {
+    query.lean.mockResolvedValue([]);
+    countDocumentsMock.mockResolvedValue(0 as never);
+
+    const res = await runGet({ id: '507f1f77bcf86cd799439011' });
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'success',
+      page: 1,
+      perPage: 20,
+      totalPages: 0,
+      total: 0,
+      results: []
+    });
+  });
+
+  it('responds 500 on DB errors', async () => {
+    countDocumentsMock.mockRejectedValue(new Error('connection lost'));
+
+    const res = await runGet({});
 
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith({ status: 'error', message: 'Internal server error' });

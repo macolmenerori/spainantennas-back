@@ -10,7 +10,9 @@ const validEnv = {
   AUTH_TIMEOUT_MS: '10000',
   RATELIMIT_MAXCONNECTIONS: '100',
   RATELIMIT_WINDOWMS: '60000',
-  CORS_WHITELIST: 'http://localhost:3000'
+  CORS_WHITELIST: 'http://localhost:3000',
+  DEFAULT_PERPAGE: '20',
+  MAX_PERPAGE: '100'
 };
 
 describe('checkEnvVars', () => {
@@ -31,5 +33,25 @@ describe('checkEnvVars', () => {
   it.each(['abc', '0', '-5', '1.5', '10s'])('returns true when AUTH_TIMEOUT_MS is %s', (value) => {
     vi.stubEnv('AUTH_TIMEOUT_MS', value);
     expect(checkEnvVars()).toBe(true);
+  });
+
+  it.each([
+    ['DEFAULT_PERPAGE', '0'],
+    ['DEFAULT_PERPAGE', 'abc'],
+    ['MAX_PERPAGE', '-1'],
+    ['MAX_PERPAGE', '1.5']
+  ])('returns true when %s is %s', (envVar, value) => {
+    vi.stubEnv(envVar, value);
+    expect(checkEnvVars()).toBe(true);
+  });
+
+  it('returns true when DEFAULT_PERPAGE is greater than MAX_PERPAGE', () => {
+    vi.stubEnv('DEFAULT_PERPAGE', '101');
+    expect(checkEnvVars()).toBe(true);
+  });
+
+  it('returns false when DEFAULT_PERPAGE equals MAX_PERPAGE', () => {
+    vi.stubEnv('DEFAULT_PERPAGE', '100');
+    expect(checkEnvVars()).toBe(false);
   });
 });
