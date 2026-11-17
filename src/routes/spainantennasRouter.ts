@@ -6,6 +6,7 @@ import {
   deletePlacement,
   exportPlacements,
   getPlacements,
+  getStats,
   getTransmitters,
   importPlacements,
   updatePlacement
@@ -17,6 +18,7 @@ import {
   createPlacementValidation,
   exportPlacementsValidation,
   getPlacementsValidation,
+  getStatsValidation,
   getTransmittersValidation,
   importPlacementsValidation,
   placementIdValidation,
@@ -1240,6 +1242,86 @@ router
 router
   .route('/export')
   .get(protect, exportPlacementsValidation, exportPlacements)
+  .all(methodNotAllowed(['GET']));
+
+/**
+ * @openapi
+ * /stats:
+ *   get:
+ *     summary: Count placements
+ *     description: >
+ *       Public count of placements matching the optional filters. No filter counts every
+ *       placement, including those without coordinates. Filters are ANDed and comma lists
+ *       match any of their values (max 100 values). Transmitter filters (type, technology)
+ *       must match the same transmitter; a placement counts once however many of its
+ *       transmitters match. Each parameter may appear once and cannot be empty; unknown
+ *       parameters are rejected.
+ *     tags:
+ *       - Stats
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         description: Placement status, comma-separated list of active, inactive, unknown
+ *         schema:
+ *           type: string
+ *           example: active
+ *       - in: query
+ *         name: type
+ *         description: Comma-separated list of TV, radio
+ *         schema:
+ *           type: string
+ *           example: radio
+ *       - in: query
+ *         name: technology
+ *         description: Comma-separated list of AM-LW, AM-MW, FM, TDT, DAB+ (encode + as %2B)
+ *         schema:
+ *           type: string
+ *           example: FM,DAB%2B
+ *     responses:
+ *       200:
+ *         description: Number of matching placements (0 when nothing matches)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 totalCount:
+ *                   type: integer
+ *                   minimum: 0
+ *                   example: 23
+ *       400:
+ *         description: Invalid query (unknown, repeated or empty parameter, bad value)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationErrorResponse'
+ *             example:
+ *               status: fail
+ *               message: Invalid input data
+ *               errors:
+ *                 - type: field
+ *                   value: DAB
+ *                   msg: 'technology must be one of: AM-LW, AM-MW, FM, TDT, DAB+'
+ *                   path: technology
+ *                   location: query
+ *       429:
+ *         $ref: '#/components/responses/TooManyRequests'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: error
+ *               message: Internal server error
+ */
+router
+  .route('/stats')
+  .get(getStatsValidation, getStats)
   .all(methodNotAllowed(['GET']));
 
 export default router;

@@ -375,3 +375,17 @@ export const exportPlacementsValidation: ValidationChain[] = [
     .isIn(EXPORT_COMPACT_VALUES)
     .withMessage(`compact must be one of: ${EXPORT_COMPACT_VALUES.join(', ')}`)
 ];
+
+// Query parameters accepted by GET /stats. Anything else is rejected.
+const STATS_QUERY_KEYS = ['status', 'type', 'technology'] as const;
+
+/**
+ * GET /stats query: the `status`, `type` and `technology` filters (same rules as
+ * GET /placement). No pagination. Read sanitized values with `matchedData()`.
+ */
+export const getStatsValidation: ValidationChain[] = [
+  query().custom(onlyKeys(STATS_QUERY_KEYS, 'query parameter')),
+  enumListQuery('status', PLACEMENT_STATUSES),
+  enumListQuery('type', TRANSMITTER_TYPES),
+  enumListQuery('technology', TRANSMITTER_TECHNOLOGIES)
+];

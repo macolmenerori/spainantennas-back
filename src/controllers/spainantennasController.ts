@@ -49,6 +49,9 @@ type ExportQuery = Pick<PlacementFilterQuery, 'status' | 'postcode' | 'type' | '
   compact?: 'true' | 'false';
 };
 
+// GET /stats query once validated and sanitized by getStatsValidation
+type StatsQuery = Pick<PlacementFilterQuery, 'status' | 'type' | 'technology'>;
+
 // Lean placement as read by the export cursor
 type ExportDocument = Record<string, unknown>;
 
@@ -611,4 +614,26 @@ export const exportPlacements = catchAsync(async (req: RequestWithUser, res: Res
     console.error('Export stream failed:', err);
     res.destroy();
   }
+});
+
+/**
+ * Counts placements matching a query already checked by `getStatsValidation`. Filters
+ * are ANDed; transmitter filters (`type`, `technology`) must match the same transmitter.
+ * No filter counts every placement, including those without coordinates. Public: no
+ * authentication.
+ *
+ * Responds 200 with `{ status, totalCount }` (0 when nothing matches), or 400 when the
+ * query is invalid.
+ */
+export const getStats = catchAsync(async (req: Request, res: Response) => {
+  const validation = checkValidation(req, res);
+  if (validation !== undefined) {
+    return validation;
+  }
+
+  // Sanitized values: Express 5 re-parses req.query, dropping express-validator's changes
+  const filters = matchedData(req, { locations: ['query'] }) as StatsQuery;
+  const totalCount = await PlacementModel.countDocuments(buildPlacementFilter(filters));
+
+  return res.status(200).json({ status: 'success', totalCount });
 });

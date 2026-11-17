@@ -73,7 +73,7 @@ Auth (`src/controllers/authController.ts`): `protect` reads only `Authorization:
 | PUT    | `/transmitter/:placementId/:transmitterId` | yes  | full transmitter                                                     |
 | DELETE | `/transmitter/:placementId/:transmitterId` | yes  | last one may be deleted                                              |
 | GET    | `/export`                                  | yes  | not paginated, streamed attachment; filters below; `?compact`        |
-| GET    | `/stats`                                   | no   | TBD, spec pending                                                    |
+| GET    | `/stats`                                   | no   | placement count; filters `status`, `type`, `technology`              |
 
 Filters:
 
@@ -129,6 +129,13 @@ Export (`GET /export`, `exportPlacements`):
 - Body: a JSON array of lean placements sorted by `_id`. Same shape as the data files plus `_id` on placements and transmitters (re-importable; import drops the ids). Pretty output is exactly `JSON.stringify(docs, null, 2)` (the data files' layout). `compact=true` drops all whitespace.
 - Headers: `res.attachment('spainantennas-export-YYYY-MM-DDTHH-mm-ssZ.json')` (UTC, `exportFilename`), so `Content-Type: application/json; charset=utf-8`. No match -> 200 with `[]`.
 - Streaming: `find(...).sort({ _id: 1 }).lean().cursor()`. The first document is read before any header is set, so an up-front DB error still gets the 500 JSON from `catchAsync`. The rest goes through `pipeline(exportChunks(...), res)`, one chunk per placement, with backpressure. The generator closes the cursor in `finally`, also when the client disconnects. A failure after the headers: log `Export stream failed:` and `res.destroy()`; the truncated body never ends with `]`. Never buffer the whole export (512 MB dyno).
+
+Stats (`GET /stats`, `getStats`):
+
+- Middleware: `getStatsValidation` -> `getStats`. Public.
+- Query: only `status`, `type`, `technology` (same list rules as `/placement`, built with `buildPlacementFilter`). Anything else -> 400.
+- Counts **placements** with `countDocuments`, never transmitters. Transmitter filters combine in one `$elemMatch`; a placement counts once however many transmitters match. No filter = every placement. Sites without coordinates are counted, so `totalCount` equals `/placement`'s `total` for the same filters.
+- Response: 200 `{ status: "success", totalCount }` (0 when nothing matches). No caching.
 
 ## Validation
 
