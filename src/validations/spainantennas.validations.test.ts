@@ -12,6 +12,7 @@ import {
   getTransmittersValidation,
   importPlacementsValidation,
   placementIdValidation,
+  transmitterIdValidation,
   updatePlacementValidation
 } from './spainantennas.validations';
 
@@ -295,6 +296,45 @@ describe('placementIdValidation', () => {
         location: 'params',
         msg: 'id must be a valid MongoDB ObjectId'
       })
+    ]);
+  });
+});
+
+describe('transmitterIdValidation', () => {
+  const PLACEMENT_ID = '507f1f77bcf86cd799439011';
+  const TRANSMITTER_ID = '507f1f77bcf86cd799439012';
+
+  const validateIds = async (placementId: string, transmitterId: string) => {
+    const req = { params: { placementId, transmitterId } } as unknown as Request;
+    for (const chain of transmitterIdValidation) {
+      await chain.run(req);
+    }
+    return validationResult(req).array() as FieldValidationError[];
+  };
+
+  const idError = (path: string) =>
+    expect.objectContaining({
+      path,
+      location: 'params',
+      msg: `${path} must be a valid MongoDB ObjectId`
+    });
+
+  it('accepts two valid ObjectIds', async () => {
+    expect(await validateIds(PLACEMENT_ID, TRANSMITTER_ID)).toEqual([]);
+  });
+
+  it.each(['abc', '507f1f77bcf86cd79943901z', ''])('rejects placementId %j', async (id) => {
+    expect(await validateIds(id, TRANSMITTER_ID)).toEqual([idError('placementId')]);
+  });
+
+  it.each(['abc', '507f1f77bcf86cd79943901z', ''])('rejects transmitterId %j', async (id) => {
+    expect(await validateIds(PLACEMENT_ID, id)).toEqual([idError('transmitterId')]);
+  });
+
+  it('reports both when both are invalid', async () => {
+    expect(await validateIds('abc', 'xyz')).toEqual([
+      idError('placementId'),
+      idError('transmitterId')
     ]);
   });
 });

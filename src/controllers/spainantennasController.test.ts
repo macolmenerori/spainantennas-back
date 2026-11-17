@@ -13,12 +13,14 @@ import {
   getStatsValidation,
   getTransmittersValidation,
   placementIdValidation,
+  transmitterIdValidation,
   updatePlacementValidation
 } from '../validations/spainantennas.validations';
 
 import {
   createPlacement,
   deletePlacement,
+  deleteTransmitter,
   exportFilename,
   exportPlacements,
   getPlacements,
@@ -445,6 +447,183 @@ describe('updatePlacement', () => {
     doc.save.mockRejectedValue(new Error('connection lost'));
 
     const res = await runUpdate(ID, minimalBody());
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ status: 'error', message: 'Internal server error' });
+  });
+});
+
+/**
+ * Runs the id validation, then deleteTransmitter, and resolves once it responds
+ * (res.json for errors, res.send for the 204).
+ */
+const runDeleteTransmitter = async (placementId: string, transmitterId: string) => {
+  const req = {
+    params: { placementId, transmitterId },
+    body: { ignored: true },
+    query: { ignored: 'yes' }
+  } as unknown as RequestWithUser;
+  for (const chain of transmitterIdValidation) {
+    await chain.run(req);
+  }
+  return new Promise<Response>((resolve) => {
+    const res = {} as Response;
+    const done = () => {
+      resolve(res);
+      return res;
+    };
+    res.status = vi.fn().mockReturnValue(res);
+    res.json = vi.fn().mockImplementation(done);
+    res.send = vi.fn().mockImplementation(done);
+    deleteTransmitter(req, res, vi.fn());
+  });
+};
+
+describe('deleteTransmitter', () => {
+  const PLACEMENT_ID = '507f1f77bcf86cd799439011';
+  const TRANSMITTER_ID = '507f1f77bcf86cd799439012';
+
+  // Stand-in for a loaded Mongoose document holding its only transmitter
+  const fakeDoc = () => {
+    const subdoc = { ...transmitter(), _id: TRANSMITTER_ID, deleteOne: vi.fn() };
+    return {
+      _id: PLACEMENT_ID,
+      lastUpdate: new Date('2026-01-01T00:00:00.000Z'),
+      subdoc,
+      transmitters: {
+        id: vi.fn((id: string) => (id === TRANSMITTER_ID ? subdoc : null))
+      },
+      save: vi.fn().mockResolvedValue(undefined)
+    };
+  };
+
+  let doc: ReturnType<typeof fakeDoc>;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    doc = fakeDoc();
+    findByIdMock.mockReset();
+    findByIdMock.mockResolvedValue(doc as never);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('responds 400 with both errors without touching the DB when the ids are invalid', async () => {
+    const res = await runDeleteTransmitter('abc', 'xyz');
+
+    expect(findByIdMock).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'fail',
+      message: 'Invalid input data',
+      errors: [
+        {
+          type: 'field',
+          value: 'abc',
+          msg: 'placementId must be a valid MongoDB ObjectId',
+          path: 'placementId',
+          location: 'params'
+        },
+        {
+          type: 'field',
+          value: 'xyz',
+          msg: 'transmitterId must be a valid MongoDB ObjectId',
+          path: 'transmitterId',
+          location: 'params'
+        }
+      ]
+    });
+  });
+
+  it('responds 404 when no placement has that id', async () => {
+    findByIdMock.mockResolvedValue(null as never);
+
+    const res = await runDeleteTransmitter(PLACEMENT_ID, TRANSMITTER_ID);
+
+    expect(findByIdMock).toHaveBeenCalledWith(PLACEMENT_ID);
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'fail',
+      message: 'No placement found with that ID'
+    });
+  });
+
+  it('responds 404 without saving when the placement has no transmitter with that id', async () => {
+    const otherId = '507f1f77bcf86cd799439099';
+
+    const res = await runDeleteTransmitter(PLACEMENT_ID, otherId);
+
+    expect(doc.transmitters.id).toHaveBeenCalledWith(otherId);
+    expect(doc.save).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'fail',
+      message: 'No transmitter found with that ID'
+    });
+  });
+
+  it('removes the last transmitter, stamps lastUpdate, saves and responds 204', async () => {
+    const res = await runDeleteTransmitter(PLACEMENT_ID, TRANSMITTER_ID);
+
+    expect(findByIdMock).toHaveBeenCalledWith(PLACEMENT_ID);
+    expect(doc.transmitters.id).toHaveBeenCalledWith(TRANSMITTER_ID);
+    expect(doc.subdoc.deleteOne).toHaveBeenCalledOnce();
+    expect(doc.lastUpdate).toEqual(NOW);
+    expect(doc.save).toHaveBeenCalledOnce();
+    expect(res.status).toHaveBeenCalledWith(204);
+    expect(res.send).toHaveBeenCalledWith();
+    expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('responds 400 when Mongoose rejects the document on save', async () => {
+    const validationError = new mongoose.Error.ValidationError();
+    validationError.addError(
+      'source',
+      new mongoose.Error.ValidatorError({ message: 'A source must be provided', path: 'source' })
+    );
+    doc.save.mockRejectedValue(validationError);
+
+    const res = await runDeleteTransmitter(PLACEMENT_ID, TRANSMITTER_ID);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'fail',
+      message: 'Invalid input data',
+      errors: [
+        { type: 'field', msg: 'A source must be provided', path: 'source', location: 'body' }
+      ]
+    });
+  });
+
+  it('responds 404 when the placement is deleted before saving', async () => {
+    doc.save.mockRejectedValue(new mongoose.Error.DocumentNotFoundError('{}', 'Placement'));
+
+    const res = await runDeleteTransmitter(PLACEMENT_ID, TRANSMITTER_ID);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'fail',
+      message: 'No placement found with that ID'
+    });
+  });
+
+  it('responds 500 on DB errors', async () => {
+    findByIdMock.mockRejectedValue(new Error('connection lost'));
+
+    const res = await runDeleteTransmitter(PLACEMENT_ID, TRANSMITTER_ID);
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ status: 'error', message: 'Internal server error' });
+  });
+
+  it('responds 500 on other save errors', async () => {
+    doc.save.mockRejectedValue(new Error('connection lost'));
+
+    const res = await runDeleteTransmitter(PLACEMENT_ID, TRANSMITTER_ID);
 
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith({ status: 'error', message: 'Internal server error' });

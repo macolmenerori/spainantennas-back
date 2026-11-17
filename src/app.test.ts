@@ -3,7 +3,7 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./models/spainantennasModel', () => ({
-  default: { create: vi.fn(), find: vi.fn(), countDocuments: vi.fn() }
+  default: { create: vi.fn(), find: vi.fn(), countDocuments: vi.fn(), findById: vi.fn() }
 }));
 
 // Writes need a token: let every request through as a logged-in user, unless a test
@@ -38,6 +38,7 @@ let model: {
   create: ReturnType<typeof vi.fn>;
   find: ReturnType<typeof vi.fn>;
   countDocuments: ReturnType<typeof vi.fn>;
+  findById: ReturnType<typeof vi.fn>;
 };
 let lean: ReturnType<typeof vi.fn>;
 
@@ -310,6 +311,43 @@ describe('stats', () => {
 
     expect(res.status).toBe(405);
     expect(res.headers.allow).toBe('GET');
+  });
+});
+
+describe('delete transmitter', () => {
+  const PLACEMENT_ID = '507f1f77bcf86cd799439011';
+  const TRANSMITTER_ID = '507f1f77bcf86cd799439012';
+  const URL = `/api/v1/transmitter/${PLACEMENT_ID}/${TRANSMITTER_ID}`;
+
+  it('deletes the transmitter and answers 204', async () => {
+    const subdoc = { deleteOne: vi.fn() };
+    const save = vi.fn().mockResolvedValue(undefined);
+    model.findById.mockResolvedValue({ transmitters: { id: () => subdoc }, save });
+
+    const res = await request(app).delete(URL);
+
+    expect(res.status).toBe(204);
+    expect(res.text).toBe('');
+    expect(model.findById).toHaveBeenCalledWith(PLACEMENT_ID);
+    expect(subdoc.deleteOne).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledOnce();
+  });
+
+  it('answers 401 from protect', async () => {
+    auth.deny = true;
+
+    const res = await request(app).delete(URL);
+
+    expect(res.status).toBe(401);
+    expect(model.findById).not.toHaveBeenCalled();
+  });
+
+  it.each(['get', 'put', 'post'] as const)('allows only DELETE (%s -> 405)', async (method) => {
+    const res = await request(app)[method](URL);
+
+    expect(res.status).toBe(405);
+    expect(res.headers.allow).toBe('DELETE');
+    expect(res.body).toEqual({ status: 'fail', message: 'Method not allowed' });
   });
 });
 
