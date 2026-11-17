@@ -13,7 +13,8 @@ import {
   importPlacementsValidation,
   placementIdValidation,
   transmitterIdValidation,
-  updatePlacementValidation
+  updatePlacementValidation,
+  updateTransmitterValidation
 } from './spainantennas.validations';
 
 const transmitter = () => ({
@@ -336,6 +337,82 @@ describe('transmitterIdValidation', () => {
       idError('placementId'),
       idError('transmitterId')
     ]);
+  });
+});
+
+describe('updateTransmitterValidation', () => {
+  const PLACEMENT_ID = '507f1f77bcf86cd799439011';
+  const TRANSMITTER_ID = '507f1f77bcf86cd799439012';
+
+  const validateUpdate = async (
+    body: unknown,
+    placementId = PLACEMENT_ID,
+    transmitterId = TRANSMITTER_ID
+  ) => {
+    const req = { params: { placementId, transmitterId }, body } as unknown as Request;
+    for (const chain of updateTransmitterValidation) {
+      await chain.run(req);
+    }
+    const errors = validationResult(req).array() as FieldValidationError[];
+    return { errors, body: req.body };
+  };
+
+  const expectUpdateError = async (body: unknown, path: string, msg: string) => {
+    const { errors } = await validateUpdate(body);
+    expect(errors).toContainEqual(expect.objectContaining({ path, location: 'body', msg }));
+  };
+
+  it('accepts a full transmitter', async () => {
+    expect((await validateUpdate(transmitter())).errors).toEqual([]);
+  });
+
+  it('accepts omitted and null nullable fields', async () => {
+    const { type, technology, stationName, broadcaster, source } = transmitter();
+    const required = { type, technology, stationName, broadcaster, source };
+    expect((await validateUpdate(required)).errors).toEqual([]);
+    expect(
+      (await validateUpdate({ ...required, frequencykHz: null, powerKw: null })).errors
+    ).toEqual([]);
+  });
+
+  it('trims strings', async () => {
+    const { errors, body } = await validateUpdate({ ...transmitter(), stationName: '  Radio 3 ' });
+    expect(errors).toEqual([]);
+    expect(body.stationName).toBe('Radio 3');
+  });
+
+  it.each([
+    ['an array', [transmitter()]],
+    ['a string', 'FM'],
+    ['null', null]
+  ])('rejects a body that is %s', async (_name, body) => {
+    await expectUpdateError(body, '', 'Body must be a JSON object');
+  });
+
+  it.each(['_id', 'lastUpdate', 'placementId', 'color'])('rejects key %s', async (key) => {
+    await expectUpdateError({ ...transmitter(), [key]: 'x' }, '', `Unknown field(s): ${key}`);
+  });
+
+  it.each([
+    ['type', undefined, 'type is required'],
+    ['technology', 'DAB', 'technology must be one of: AM-LW, AM-MW, FM, TDT, DAB+'],
+    ['stationName', '   ', 'stationName cannot be empty'],
+    [
+      'broadcaster',
+      'a'.repeat(MAX_NAME_LENGTH + 1),
+      `broadcaster must be at most ${MAX_NAME_LENGTH} characters`
+    ],
+    ['source', null, 'source is required'],
+    ['frequencykHz', '88200', 'frequencykHz must be a number'],
+    ['frequencykHz', 0, 'frequencykHz must be greater than 0'],
+    ['powerKw', -1, 'powerKw must be 0 or greater']
+  ])('rejects %s = %j', async (field, value, msg) => {
+    await expectUpdateError({ ...transmitter(), [field]: value }, field, msg);
+  });
+
+  it('reports id and body errors together', async () => {
+    const { errors } = await validateUpdate({ ...transmitter(), type: 'tv' }, 'abc', 'xyz');
+    expect(errors.map((e) => e.path)).toEqual(['placementId', 'transmitterId', 'type']);
   });
 });
 

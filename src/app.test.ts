@@ -3,7 +3,14 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./models/spainantennasModel', () => ({
-  default: { create: vi.fn(), find: vi.fn(), countDocuments: vi.fn(), findById: vi.fn() }
+  default: {
+    create: vi.fn(),
+    find: vi.fn(),
+    countDocuments: vi.fn(),
+    findById: vi.fn(),
+    updateOne: vi.fn(),
+    exists: vi.fn()
+  }
 }));
 
 // Writes need a token: let every request through as a logged-in user, unless a test
@@ -39,6 +46,8 @@ let model: {
   find: ReturnType<typeof vi.fn>;
   countDocuments: ReturnType<typeof vi.fn>;
   findById: ReturnType<typeof vi.fn>;
+  updateOne: ReturnType<typeof vi.fn>;
+  exists: ReturnType<typeof vi.fn>;
 };
 let lean: ReturnType<typeof vi.fn>;
 
@@ -314,6 +323,63 @@ describe('stats', () => {
   });
 });
 
+describe('update transmitter', () => {
+  const PLACEMENT_ID = '507f1f77bcf86cd799439011';
+  const TRANSMITTER_ID = '507f1f77bcf86cd799439012';
+  const URL = `/api/v1/transmitter/${PLACEMENT_ID}/${TRANSMITTER_ID}`;
+  const body = {
+    type: 'radio',
+    technology: 'FM',
+    frequencykHz: 88200,
+    stationName: 'Radio Nacional',
+    broadcaster: 'RTVE',
+    powerKw: 10,
+    source: 'Ministry FM list'
+  };
+
+  it('updates the transmitter and answers 200 with it', async () => {
+    model.updateOne.mockResolvedValue({ matchedCount: 1, modifiedCount: 1 });
+
+    const res = await request(app).put(URL).send(body);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      status: 'success',
+      data: { transmitter: { _id: TRANSMITTER_ID, ...body } }
+    });
+    expect(model.updateOne).toHaveBeenCalledOnce();
+  });
+
+  it('answers 401 from protect', async () => {
+    auth.deny = true;
+
+    const res = await request(app).put(URL).send(body);
+
+    expect(res.status).toBe(401);
+    expect(model.updateOne).not.toHaveBeenCalled();
+  });
+
+  it('answers 400 on an invalid transmitterId', async () => {
+    const res = await request(app).put(`/api/v1/transmitter/${PLACEMENT_ID}/abc`).send(body);
+
+    expect(res.status).toBe(400);
+    expect(res.body.errors).toEqual([
+      expect.objectContaining({ path: 'transmitterId', location: 'params' })
+    ]);
+    expect(model.updateOne).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 when the transmitter does not exist', async () => {
+    model.updateOne.mockResolvedValue({ matchedCount: 0, modifiedCount: 0 });
+    model.exists.mockResolvedValue({ _id: PLACEMENT_ID });
+
+    const res = await request(app).put(URL).send(body);
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ status: 'fail', message: 'No transmitter found with that ID' });
+  });
+});
+
 describe('delete transmitter', () => {
   const PLACEMENT_ID = '507f1f77bcf86cd799439011';
   const TRANSMITTER_ID = '507f1f77bcf86cd799439012';
@@ -342,13 +408,16 @@ describe('delete transmitter', () => {
     expect(model.findById).not.toHaveBeenCalled();
   });
 
-  it.each(['get', 'put', 'post'] as const)('allows only DELETE (%s -> 405)', async (method) => {
-    const res = await request(app)[method](URL);
+  it.each(['get', 'post', 'patch'] as const)(
+    'allows only PUT and DELETE (%s -> 405)',
+    async (method) => {
+      const res = await request(app)[method](URL);
 
-    expect(res.status).toBe(405);
-    expect(res.headers.allow).toBe('DELETE');
-    expect(res.body).toEqual({ status: 'fail', message: 'Method not allowed' });
-  });
+      expect(res.status).toBe(405);
+      expect(res.headers.allow).toBe('PUT, DELETE');
+      expect(res.body).toEqual({ status: 'fail', message: 'Method not allowed' });
+    }
+  );
 });
 
 describe('placement import', () => {

@@ -14,7 +14,8 @@ import {
   getTransmittersValidation,
   placementIdValidation,
   transmitterIdValidation,
-  updatePlacementValidation
+  updatePlacementValidation,
+  updateTransmitterValidation
 } from '../validations/spainantennas.validations';
 
 import {
@@ -26,7 +27,8 @@ import {
   getPlacements,
   getStats,
   getTransmitters,
-  updatePlacement
+  updatePlacement,
+  updateTransmitter
 } from './spainantennasController';
 
 vi.mock('../models/spainantennasModel', () => ({
@@ -36,7 +38,9 @@ vi.mock('../models/spainantennasModel', () => ({
     countDocuments: vi.fn(),
     findById: vi.fn(),
     findByIdAndDelete: vi.fn(),
-    aggregate: vi.fn()
+    aggregate: vi.fn(),
+    updateOne: vi.fn(),
+    exists: vi.fn()
   }
 }));
 
@@ -47,6 +51,8 @@ const findByIdMock = vi.mocked(PlacementModel.findById);
 const findByIdAndDeleteMock = vi.mocked(PlacementModel.findByIdAndDelete);
 const findMock = vi.mocked(PlacementModel.find);
 const countDocumentsMock = vi.mocked(PlacementModel.countDocuments);
+const updateOneMock = vi.mocked(PlacementModel.updateOne);
+const existsMock = vi.mocked(PlacementModel.exists);
 
 const NOW = new Date('2026-11-13T10:00:00.000Z');
 
@@ -624,6 +630,187 @@ describe('deleteTransmitter', () => {
     doc.save.mockRejectedValue(new Error('connection lost'));
 
     const res = await runDeleteTransmitter(PLACEMENT_ID, TRANSMITTER_ID);
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ status: 'error', message: 'Internal server error' });
+  });
+});
+
+/**
+ * Runs the PUT validation, then updateTransmitter, and resolves once it responds.
+ */
+const runUpdateTransmitter = async (placementId: string, transmitterId: string, body: unknown) => {
+  const req = { params: { placementId, transmitterId }, body } as unknown as RequestWithUser;
+  for (const chain of updateTransmitterValidation) {
+    await chain.run(req);
+  }
+  return new Promise<Response>((resolve) => {
+    const res = {} as Response;
+    res.status = vi.fn().mockReturnValue(res);
+    res.json = vi.fn().mockImplementation(() => {
+      resolve(res);
+      return res;
+    });
+    updateTransmitter(req, res, vi.fn());
+  });
+};
+
+describe('updateTransmitter', () => {
+  const PLACEMENT_ID = '507f1f77bcf86cd799439011';
+  const TRANSMITTER_ID = '507f1f77bcf86cd799439012';
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    updateOneMock.mockReset();
+    updateOneMock.mockResolvedValue({ matchedCount: 1, modifiedCount: 1 } as never);
+    existsMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('replaces the transmitter atomically by _id, stamps lastUpdate and responds 200', async () => {
+    const res = await runUpdateTransmitter(PLACEMENT_ID, TRANSMITTER_ID, transmitter());
+
+    const stored = { _id: TRANSMITTER_ID, ...transmitter() };
+    expect(updateOneMock).toHaveBeenCalledWith(
+      { _id: PLACEMENT_ID, 'transmitters._id': TRANSMITTER_ID },
+      { $set: { 'transmitters.$': stored, lastUpdate: NOW } },
+      { runValidators: true }
+    );
+    expect(existsMock).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({ status: 'success', data: { transmitter: stored } });
+  });
+
+  it('stores omitted nullable fields as null and trims strings', async () => {
+    const body: Partial<ReturnType<typeof transmitter>> = {
+      ...transmitter(),
+      stationName: '  Radio 3  '
+    };
+    delete body.frequencykHz;
+    delete body.powerKw;
+
+    const res = await runUpdateTransmitter(PLACEMENT_ID, TRANSMITTER_ID, body);
+
+    const stored = {
+      _id: TRANSMITTER_ID,
+      ...transmitter(),
+      stationName: 'Radio 3',
+      frequencykHz: null,
+      powerKw: null
+    };
+    expect(updateOneMock.mock.calls[0][1]).toEqual({
+      $set: { 'transmitters.$': stored, lastUpdate: NOW }
+    });
+    expect(res.json).toHaveBeenCalledWith({ status: 'success', data: { transmitter: stored } });
+  });
+
+  it('stamps lastUpdate even when nothing changed', async () => {
+    updateOneMock.mockResolvedValue({ matchedCount: 1, modifiedCount: 0 } as never);
+
+    const res = await runUpdateTransmitter(PLACEMENT_ID, TRANSMITTER_ID, transmitter());
+
+    expect(updateOneMock.mock.calls[0][1]).toMatchObject({ $set: { lastUpdate: NOW } });
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('responds 400 with id and body errors without touching the DB', async () => {
+    const res = await runUpdateTransmitter('abc', TRANSMITTER_ID, {
+      ...transmitter(),
+      _id: TRANSMITTER_ID
+    });
+
+    expect(updateOneMock).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'fail',
+      message: 'Invalid input data',
+      errors: [
+        {
+          type: 'field',
+          value: 'abc',
+          msg: 'placementId must be a valid MongoDB ObjectId',
+          path: 'placementId',
+          location: 'params'
+        },
+        expect.objectContaining({ msg: 'Unknown field(s): _id', path: '', location: 'body' })
+      ]
+    });
+  });
+
+  it('responds 404 for the placement when no placement has that id', async () => {
+    updateOneMock.mockResolvedValue({ matchedCount: 0, modifiedCount: 0 } as never);
+    existsMock.mockResolvedValue(null as never);
+
+    const res = await runUpdateTransmitter(PLACEMENT_ID, TRANSMITTER_ID, transmitter());
+
+    expect(existsMock).toHaveBeenCalledWith({ _id: PLACEMENT_ID });
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'fail',
+      message: 'No placement found with that ID'
+    });
+  });
+
+  it('responds 404 for the transmitter when the placement has no transmitter with that id', async () => {
+    updateOneMock.mockResolvedValue({ matchedCount: 0, modifiedCount: 0 } as never);
+    existsMock.mockResolvedValue({ _id: PLACEMENT_ID } as never);
+
+    const res = await runUpdateTransmitter(PLACEMENT_ID, TRANSMITTER_ID, transmitter());
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'fail',
+      message: 'No transmitter found with that ID'
+    });
+  });
+
+  it('responds 400 with body paths when the update validators reject the transmitter', async () => {
+    const validationError = new mongoose.Error.ValidationError();
+    validationError.addError(
+      'transmitters.0.source',
+      new mongoose.Error.ValidatorError({
+        message: 'A transmitter source must be provided',
+        path: 'transmitters.0.source'
+      })
+    );
+    updateOneMock.mockRejectedValue(validationError);
+
+    const res = await runUpdateTransmitter(PLACEMENT_ID, TRANSMITTER_ID, transmitter());
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      status: 'fail',
+      message: 'Invalid input data',
+      errors: [
+        {
+          type: 'field',
+          msg: 'A transmitter source must be provided',
+          path: 'source',
+          location: 'body'
+        }
+      ]
+    });
+  });
+
+  it('responds 500 on DB errors', async () => {
+    updateOneMock.mockRejectedValue(new Error('connection lost'));
+
+    const res = await runUpdateTransmitter(PLACEMENT_ID, TRANSMITTER_ID, transmitter());
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ status: 'error', message: 'Internal server error' });
+  });
+
+  it('responds 500 when the existence check fails', async () => {
+    updateOneMock.mockResolvedValue({ matchedCount: 0, modifiedCount: 0 } as never);
+    existsMock.mockRejectedValue(new Error('connection lost'));
+
+    const res = await runUpdateTransmitter(PLACEMENT_ID, TRANSMITTER_ID, transmitter());
 
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith({ status: 'error', message: 'Internal server error' });
