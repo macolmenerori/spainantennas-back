@@ -10,6 +10,7 @@ import {
   createPlacementValidation,
   exportPlacementsValidation,
   getPlacementsValidation,
+  getStatsValidation,
   getTransmittersValidation,
   placementIdValidation,
   updatePlacementValidation
@@ -21,6 +22,7 @@ import {
   exportFilename,
   exportPlacements,
   getPlacements,
+  getStats,
   getTransmitters,
   updatePlacement
 } from './spainantennasController';
@@ -1007,5 +1009,95 @@ describe('exportPlacements', () => {
     expect(res.json).not.toHaveBeenCalled();
     expect(res.body.endsWith(']')).toBe(false);
     expect(cursor.close).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Runs the GET /stats validation, then getStats, and resolves once it responds.
+ */
+const runStats = async (query: Record<string, unknown>) => {
+  const req = { query } as unknown as Request;
+  for (const chain of getStatsValidation) {
+    await chain.run(req);
+  }
+  return new Promise<Response>((resolve) => {
+    const res = {} as Response;
+    res.status = vi.fn().mockReturnValue(res);
+    res.json = vi.fn().mockImplementation(() => {
+      resolve(res);
+      return res;
+    });
+    getStats(req, res, vi.fn());
+  });
+};
+
+describe('getStats', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    countDocumentsMock.mockReset();
+    countDocumentsMock.mockResolvedValue(23 as never);
+  });
+
+  it('counts every placement when there is no filter', async () => {
+    const res = await runStats({});
+
+    expect(countDocumentsMock).toHaveBeenCalledWith({});
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({ status: 'success', totalCount: 23 });
+  });
+
+  it('filters by placement status', async () => {
+    await runStats({ status: 'active,unknown' });
+
+    expect(countDocumentsMock).toHaveBeenCalledWith({ status: { $in: ['active', 'unknown'] } });
+  });
+
+  it('combines transmitter filters in a single $elemMatch', async () => {
+    await runStats({ status: 'active', type: 'radio', technology: 'FM, DAB+' });
+
+    expect(countDocumentsMock).toHaveBeenCalledWith({
+      status: { $in: ['active'] },
+      transmitters: {
+        $elemMatch: { type: { $in: ['radio'] }, technology: { $in: ['FM', 'DAB+'] } }
+      }
+    });
+  });
+
+  it('responds 200 with totalCount 0 when nothing matches', async () => {
+    countDocumentsMock.mockResolvedValue(0 as never);
+
+    const res = await runStats({ technology: 'AM-LW' });
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({ status: 'success', totalCount: 0 });
+  });
+
+  it.each([
+    [{ page: '1' }, 'Unknown query parameter(s): page'],
+    [{ postcode: '28001' }, 'Unknown query parameter(s): postcode'],
+    [{ technology: 'DAB' }, 'technology must be one of: AM-LW, AM-MW, FM, TDT, DAB+'],
+    [{ status: '' }, 'status cannot be empty'],
+    [{ type: ['TV', 'radio'] }, 'type must be given only once']
+  ])('responds 400 without querying the DB for %o', async (query, msg) => {
+    const res = await runStats(query);
+
+    expect(countDocumentsMock).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'fail',
+        message: 'Invalid input data',
+        errors: [expect.objectContaining({ msg })]
+      })
+    );
+  });
+
+  it('responds 500 on DB errors', async () => {
+    countDocumentsMock.mockRejectedValue(new Error('connection lost'));
+
+    const res = await runStats({});
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ status: 'error', message: 'Internal server error' });
   });
 });

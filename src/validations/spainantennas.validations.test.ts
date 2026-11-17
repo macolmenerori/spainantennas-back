@@ -8,6 +8,7 @@ import {
   createPlacementValidation,
   exportPlacementsValidation,
   getPlacementsValidation,
+  getStatsValidation,
   getTransmittersValidation,
   importPlacementsValidation,
   placementIdValidation,
@@ -753,5 +754,80 @@ describe('exportPlacementsValidation', () => {
       'postcode',
       'postcode accepts at most 100 values'
     );
+  });
+});
+
+describe('getStatsValidation', () => {
+  const validateQuery = async (query: Record<string, unknown>) => {
+    const req = { query } as unknown as Request;
+    for (const chain of getStatsValidation) {
+      await chain.run(req);
+    }
+    return {
+      errors: validationResult(req).array() as FieldValidationError[],
+      data: matchedData(req, { locations: ['query'] })
+    };
+  };
+
+  const expectQueryError = async (query: Record<string, unknown>, path: string, msg: string) => {
+    const { errors } = await validateQuery(query);
+    expect(errors).toEqual([expect.objectContaining({ path, location: 'query', msg })]);
+  };
+
+  it('accepts an empty query', async () => {
+    expect((await validateQuery({})).errors).toEqual([]);
+  });
+
+  it('accepts every parameter and sanitizes the lists', async () => {
+    const { errors, data } = await validateQuery({
+      status: 'active, inactive',
+      type: 'radio,TV',
+      technology: 'FM,DAB+'
+    });
+
+    expect(errors).toEqual([]);
+    expect(data).toMatchObject({
+      status: ['active', 'inactive'],
+      type: ['radio', 'TV'],
+      technology: ['FM', 'DAB+']
+    });
+  });
+
+  it.each([
+    'page',
+    'perPage',
+    'fields',
+    'id',
+    'siteOperator',
+    'postcode',
+    'stationName',
+    'broadcaster',
+    'compact'
+  ])('rejects the %s parameter', async (key) => {
+    const { errors } = await validateQuery({ [key]: '1' });
+
+    expect(errors).toEqual([
+      expect.objectContaining({ msg: `Unknown query parameter(s): ${key}` })
+    ]);
+  });
+
+  it.each([
+    ['status', 'retired', 'status must be one of: active, inactive, unknown'],
+    ['type', 'tv', 'type must be one of: TV, radio'],
+    ['technology', 'DAB', 'technology must be one of: AM-LW, AM-MW, FM, TDT, DAB+'],
+    ['status', '', 'status cannot be empty'],
+    ['technology', 'FM,', 'technology cannot contain empty values']
+  ])('rejects %s=%j', async (key, value, msg) => {
+    await expectQueryError({ [key]: value }, key, msg);
+  });
+
+  it.each(['status', 'type', 'technology'])('rejects a repeated %s', async (key) => {
+    await expectQueryError({ [key]: ['a', 'b'] }, key, `${key} must be given only once`);
+  });
+
+  it('rejects a list over the item limit', async () => {
+    const statuses = Array.from({ length: 101 }, () => 'active').join(',');
+
+    await expectQueryError({ status: statuses }, 'status', 'status accepts at most 100 values');
   });
 });

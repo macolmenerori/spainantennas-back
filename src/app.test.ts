@@ -278,6 +278,41 @@ describe('export', () => {
   });
 });
 
+describe('stats', () => {
+  const STATS_URL = '/api/v1/stats';
+
+  it('counts placements without a token', async () => {
+    auth.deny = true;
+    model.countDocuments.mockResolvedValue(23);
+
+    const res = await request(app).get(`${STATS_URL}?status=active&technology=FM,DAB%2B`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: 'success', totalCount: 23 });
+    expect(model.countDocuments).toHaveBeenCalledWith({
+      status: { $in: ['active'] },
+      transmitters: { $elemMatch: { technology: { $in: ['FM', 'DAB+'] } } }
+    });
+  });
+
+  it('rejects unknown query parameters', async () => {
+    const res = await request(app).get(`${STATS_URL}?page=1`);
+
+    expect(res.status).toBe(400);
+    expect(res.body.errors).toEqual([
+      expect.objectContaining({ msg: 'Unknown query parameter(s): page' })
+    ]);
+    expect(model.countDocuments).not.toHaveBeenCalled();
+  });
+
+  it('allows only GET', async () => {
+    const res = await request(app).post(STATS_URL).send({});
+
+    expect(res.status).toBe(405);
+    expect(res.headers.allow).toBe('GET');
+  });
+});
+
 describe('placement import', () => {
   const IMPORT_URL = '/api/v1/placement/import';
   const emptyArray = Buffer.from('[]');
