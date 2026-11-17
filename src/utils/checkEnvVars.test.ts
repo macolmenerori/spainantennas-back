@@ -12,7 +12,8 @@ const validEnv = {
   RATELIMIT_WINDOWMS: '60000',
   CORS_WHITELIST: 'http://localhost:3000',
   DEFAULT_PERPAGE: '20',
-  MAX_PERPAGE: '100'
+  MAX_PERPAGE: '100',
+  IMPORT_MAX_SIZE_MB: '100'
 };
 
 describe('checkEnvVars', () => {
@@ -25,10 +26,13 @@ describe('checkEnvVars', () => {
     expect(checkEnvVars()).toBe(false);
   });
 
-  it('returns true when a var is missing', () => {
-    vi.stubEnv('AUTH_TIMEOUT_MS', '');
-    expect(checkEnvVars()).toBe(true);
-  });
+  it.each(['AUTH_TIMEOUT_MS', 'IMPORT_MAX_SIZE_MB'])(
+    'returns true when %s is missing',
+    (envVar) => {
+      vi.stubEnv(envVar, '');
+      expect(checkEnvVars()).toBe(true);
+    }
+  );
 
   it.each(['abc', '0', '-5', '1.5', '10s'])('returns true when AUTH_TIMEOUT_MS is %s', (value) => {
     vi.stubEnv('AUTH_TIMEOUT_MS', value);
@@ -43,7 +47,9 @@ describe('checkEnvVars', () => {
     ['DEFAULT_PERPAGE', '0'],
     ['DEFAULT_PERPAGE', 'abc'],
     ['MAX_PERPAGE', '-1'],
-    ['MAX_PERPAGE', '1.5']
+    ['MAX_PERPAGE', '1.5'],
+    ['IMPORT_MAX_SIZE_MB', '0'],
+    ['IMPORT_MAX_SIZE_MB', '100MB']
   ])('returns true when %s is %s', (envVar, value) => {
     vi.stubEnv(envVar, value);
     expect(checkEnvVars()).toBe(true);

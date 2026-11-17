@@ -8,6 +8,7 @@ import {
   createPlacementValidation,
   getPlacementsValidation,
   getTransmittersValidation,
+  importPlacementsValidation,
   placementIdValidation,
   updatePlacementValidation
 } from './spainantennas.validations';
@@ -614,5 +615,51 @@ describe('getTransmittersValidation', () => {
     ['perPage', 'abc']
   ])('rejects %s=%j', async (key, value) => {
     await expectQueryError({ [key]: value }, key, `${key} must be a positive integer`);
+  });
+});
+
+describe('importPlacementsValidation', () => {
+  const validateQuery = async (query: Record<string, unknown>) => {
+    const req = { query } as unknown as Request;
+    for (const chain of importPlacementsValidation) {
+      await chain.run(req);
+    }
+    return {
+      errors: validationResult(req).array() as FieldValidationError[],
+      data: matchedData(req, { locations: ['query'] })
+    };
+  };
+
+  it('accepts an empty query', async () => {
+    expect((await validateQuery({})).errors).toEqual([]);
+  });
+
+  it.each(['true', 'false'])('accepts dryRun=%s', async (value) => {
+    const { errors, data } = await validateQuery({ dryRun: value });
+
+    expect(errors).toEqual([]);
+    expect(data).toMatchObject({ dryRun: value });
+  });
+
+  it.each(['yes', '', 'TRUE', '1'])('rejects dryRun=%j', async (value) => {
+    const { errors } = await validateQuery({ dryRun: value });
+
+    expect(errors).toEqual([
+      expect.objectContaining({ path: 'dryRun', msg: 'dryRun must be one of: true, false' })
+    ]);
+  });
+
+  it('rejects a repeated dryRun', async () => {
+    const { errors } = await validateQuery({ dryRun: ['true', 'false'] });
+
+    expect(errors).toEqual([
+      expect.objectContaining({ path: 'dryRun', msg: 'dryRun must be given only once' })
+    ]);
+  });
+
+  it('rejects unknown query parameters', async () => {
+    const { errors } = await validateQuery({ dryRun: 'true', page: '1' });
+
+    expect(errors).toEqual([expect.objectContaining({ msg: 'Unknown query parameter(s): page' })]);
   });
 });

@@ -6,9 +6,17 @@ vi.mock('./models/spainantennasModel', () => ({
   default: { create: vi.fn(), find: vi.fn(), countDocuments: vi.fn() }
 }));
 
-// Writes need a token: let every request through as a logged-in user
+// Writes need a token: let every request through as a logged-in user, unless a test
+// sets auth.deny to see what happens before protect lets a request in
+const auth = vi.hoisted(() => ({ deny: false }));
 vi.mock('./controllers/authController', () => ({
-  protect: (req: Request, res: Response, next: NextFunction) => next()
+  protect: (req: Request, res: Response, next: NextFunction) => {
+    if (auth.deny) {
+      res.status(401).json({ status: 'fail', message: 'You are not logged in!' });
+      return;
+    }
+    next();
+  }
 }));
 
 const ORIGIN = 'http://localhost:3000';
@@ -43,6 +51,8 @@ beforeEach(async () => {
   vi.stubEnv('RATELIMIT_WINDOWMS', '900000');
   vi.stubEnv('DEFAULT_PERPAGE', '20');
   vi.stubEnv('MAX_PERPAGE', '100');
+  vi.stubEnv('IMPORT_MAX_SIZE_MB', '1');
+  auth.deny = false;
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.resetModules();
 
@@ -214,5 +224,113 @@ describe('fallbacks', () => {
     expect(res.status).toBe(405);
     expect(res.headers.allow).toBe('GET');
     expect(res.body).toEqual({ status: 'fail', message: 'Method not allowed' });
+  });
+});
+
+describe('placement import', () => {
+  const IMPORT_URL = '/api/v1/placement/import';
+  const emptyArray = Buffer.from('[]');
+  const asJson = { filename: 'data.json', contentType: 'application/json' };
+
+  it('imports an uploaded application/json file', async () => {
+    const res = await request(app).post(IMPORT_URL).attach('file', emptyArray, asJson);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: 'success', inserted: 0, failed: 0, errors: [] });
+  });
+
+  it('is not caught by /placement/:id', async () => {
+    const res = await request(app).put(IMPORT_URL).send({});
+
+    expect(res.status).toBe(405);
+    expect(res.headers.allow).toBe('POST');
+  });
+
+  it('answers 401 from protect before reading the upload', async () => {
+    auth.deny = true;
+
+    const res = await request(app)
+      .post(IMPORT_URL)
+      .attach('file', emptyArray, { filename: 'data.json', contentType: 'text/plain' });
+
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a bad query before reading the upload', async () => {
+    const res = await request(app)
+      .post(IMPORT_URL)
+      .query({ dryRun: 'yes' })
+      .attach('file', emptyArray, { filename: 'data.json', contentType: 'text/plain' });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ status: 'fail', message: 'Invalid input data' });
+  });
+
+  it('answers 415 when the file is not application/json', async () => {
+    const res = await request(app).post(IMPORT_URL).attach('file', emptyArray, {
+      filename: 'data.json',
+      contentType: 'application/octet-stream'
+    });
+
+    expect(res.status).toBe(415);
+    expect(res.body).toEqual({ status: 'fail', message: 'File must be application/json' });
+  });
+
+  it('answers 413 when the file is over IMPORT_MAX_SIZE_MB', async () => {
+    const big = Buffer.alloc(1024 * 1024 + 1, ' ');
+
+    const res = await request(app).post(IMPORT_URL).attach('file', big, asJson);
+
+    expect(res.status).toBe(413);
+    expect(res.body).toEqual({ status: 'fail', message: 'File too large' });
+  });
+
+  it('accepts a file of exactly IMPORT_MAX_SIZE_MB', async () => {
+    const exact = Buffer.concat([emptyArray, Buffer.alloc(1024 * 1024 - 2, ' ')]);
+
+    const res = await request(app).post(IMPORT_URL).attach('file', exact, asJson);
+
+    expect(res.status).toBe(200);
+  });
+
+  it.each([
+    [
+      'a text field',
+      (req: request.Test) => req.field('note', 'x').attach('file', emptyArray, asJson),
+      'Only the "file" field is allowed'
+    ],
+    [
+      'a file in another field',
+      (req: request.Test) => req.attach('upload', emptyArray, asJson),
+      'Unexpected file field; send the file in field "file"'
+    ],
+    [
+      'two files',
+      (req: request.Test) =>
+        req.attach('file', emptyArray, asJson).attach('file', emptyArray, asJson),
+      'Only one file may be uploaded'
+    ]
+  ])('answers 400 on %s', async (_label, build, message) => {
+    const res = await build(request(app).post(IMPORT_URL));
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ status: 'fail', message });
+  });
+
+  it('answers 400 on a malformed multipart body', async () => {
+    const res = await request(app)
+      .post(IMPORT_URL)
+      .set('Content-Type', 'multipart/form-data; boundary=xyz')
+      .send('--xyz\r\nContent-Disposition: form-data; name="file"; filename="a.json"\r\n');
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ status: 'fail', message: 'Invalid multipart body' });
+  });
+
+  it('answers 400 when no file is sent', async () => {
+    const res = await request(app).post(IMPORT_URL).send([]);
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ status: 'fail', message: 'No file uploaded' });
   });
 });
