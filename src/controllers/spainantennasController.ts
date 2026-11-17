@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { matchedData } from 'express-validator';
 import mongoose, { PipelineStage } from 'mongoose';
+import { pipeline } from 'stream/promises';
 
 import PlacementModel from '../models/spainantennasModel';
 import { Location, Placement, Transmitter } from '../models/spainantennasTypes';
@@ -42,6 +43,20 @@ type TransmitterListQuery = TransmitterFilterQuery & {
 
 // POST /placement/import query once validated by importPlacementsValidation
 type ImportQuery = { dryRun?: 'true' | 'false' };
+
+// GET /export query once validated and sanitized by exportPlacementsValidation
+type ExportQuery = Pick<PlacementFilterQuery, 'status' | 'postcode' | 'type' | 'technology'> & {
+  compact?: 'true' | 'false';
+};
+
+// Lean placement as read by the export cursor
+type ExportDocument = Record<string, unknown>;
+
+// What the export generator needs from a Mongoose query cursor
+type ExportCursor = {
+  next: () => Promise<ExportDocument | null>;
+  close: () => Promise<unknown>;
+};
 
 // One failed import item, by its position in the file
 type ImportError = { index: number; message: string };
@@ -506,4 +521,94 @@ export const importPlacements = catchAsync(async (req: RequestWithUser, res: Res
     return res.status(400).json({ status: 'fail', message: 'No placements imported', ...summary });
   }
   return res.status(200).json({ status: 'success', ...summary });
+});
+
+/**
+ * Attachment name for an export: `spainantennas-export-YYYY-MM-DDTHH-mm-ssZ.json`, from the
+ * UTC time `date` (`:` replaced by `-`, milliseconds dropped).
+ */
+export const exportFilename = (date: Date): string =>
+  `spainantennas-export-${date.toISOString().slice(0, 19).replaceAll(':', '-')}Z.json`;
+
+/**
+ * Yields the export as JSON array text, one chunk per placement, starting from `first` (the
+ * cursor's first document, already read). Pretty output is byte for byte
+ * `JSON.stringify(docs, null, 2)`, the data files' layout; compact output has no
+ * whitespace. The cursor is closed when the generator ends, including when the response
+ * is aborted.
+ */
+async function* exportChunks(
+  cursor: ExportCursor,
+  first: ExportDocument,
+  compact: boolean
+): AsyncGenerator<string> {
+  // JSON.stringify escapes newlines inside strings, so every raw newline is indentation
+  const format = compact
+    ? (doc: ExportDocument) => JSON.stringify(doc)
+    : (doc: ExportDocument) => `  ${JSON.stringify(doc, null, 2).replaceAll('\n', '\n  ')}`;
+  const separator = compact ? ',' : ',\n';
+
+  try {
+    yield `[${compact ? '' : '\n'}${format(first)}`;
+    for (let doc = await cursor.next(); doc !== null; doc = await cursor.next()) {
+      yield separator + format(doc);
+    }
+    yield compact ? ']' : '\n]';
+  } finally {
+    // Closing only frees the server-side cursor: the export is already done or aborted
+    await cursor.close().catch(() => undefined);
+  }
+}
+
+/**
+ * Exports placements as a JSON array attachment, from a query already checked by
+ * `exportPlacementsValidation`: every placement by default, or those matching the
+ * `status`, `postcode`, `type` and `technology` filters (ANDed; transmitter filters must
+ * match the same transmitter, and matching placements keep all their transmitters).
+ * Sorted by `_id`, `_id` included on placements and transmitters, so the file can be
+ * re-imported. Pretty-printed (2 spaces) unless `compact=true`. Requires authentication.
+ *
+ * The placements are streamed from a cursor, never held in memory together. The headers
+ * are sent once the first document is read, so a query that fails up front still gets the
+ * 500 JSON. A failure after that cannot change the response: it is logged and the
+ * connection destroyed, so the client sees an aborted download, not a truncated file.
+ *
+ * Responds 200 with the attachment (`[]` when nothing matches), or 400 when the query is
+ * invalid.
+ */
+export const exportPlacements = catchAsync(async (req: RequestWithUser, res: Response) => {
+  const validation = checkValidation(req, res);
+  if (validation !== undefined) {
+    return validation;
+  }
+
+  // Sanitized values: Express 5 re-parses req.query, dropping express-validator's changes
+  const { compact, ...filters } = matchedData(req, { locations: ['query'] }) as ExportQuery;
+  const filename = exportFilename(new Date());
+  const cursor: ExportCursor = PlacementModel.find(buildPlacementFilter(filters))
+    .sort({ _id: 1 })
+    .lean<ExportDocument>()
+    .cursor();
+
+  let first: ExportDocument | null;
+  try {
+    first = await cursor.next();
+  } catch (err) {
+    await cursor.close().catch(() => undefined);
+    throw err;
+  }
+
+  res.status(200).attachment(filename);
+  if (first === null) {
+    await cursor.close().catch(() => undefined);
+    return res.send('[]');
+  }
+
+  try {
+    await pipeline(exportChunks(cursor, first, compact === 'true'), res);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('Export stream failed:', err);
+    res.destroy();
+  }
 });

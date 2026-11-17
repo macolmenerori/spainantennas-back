@@ -22,7 +22,7 @@ Express + TypeScript API over MongoDB (Mongoose) serving radio/TV antenna sites 
   7. `compression()` defaults.
 - `dotenv` loads `config.env` (gitignored) at the very top of `server.ts`, before importing `app` (which reads env when it loads); keep `config.env.example` (committed) updated. `checkEnvVars()` exits on missing vars, on a non-positive-integer `AUTH_TIMEOUT_MS`, `RATELIMIT_MAXCONNECTIONS`, `RATELIMIT_WINDOWMS`, `DEFAULT_PERPAGE`, `MAX_PERPAGE` or `IMPORT_MAX_SIZE_MB`, and when `DEFAULT_PERPAGE > MAX_PERPAGE`.
 - ESLint (flat config, typescript-eslint, prettier, simple-import-sort) + Prettier.
-- Vitest, no real DB (mock Mongoose models and `fetch`). Unit tests call handlers with fake req/res; `src/app.test.ts` drives the real `app` in-process with supertest (middleware, wiring), stubbing env then `vi.resetModules()` + dynamic `import('./app')` because `app.ts` reads env when it loads. `vitest.config.mts` (`.mts` because the package is CJS) restores mocks, stubbed globals and envs after each test. In tests that import Express's `Response` type, build fetch responses with `new globalThis.Response(...)`. `src/app.test.ts` mocks `protect` to let requests through; set `auth.deny = true` to make it answer 401. Import tests live in `spainantennasController.import.test.ts`: they use the real model (construction and `validate()` need no connection) and spy only on `insertMany`. The schema default `Date.now` is captured at load, so fake timers don't reach it.
+- Vitest, no real DB (mock Mongoose models and `fetch`). Unit tests call handlers with fake req/res; `src/app.test.ts` drives the real `app` in-process with supertest (middleware, wiring), stubbing env then `vi.resetModules()` + dynamic `import('./app')` because `app.ts` reads env when it loads. `vitest.config.mts` (`.mts` because the package is CJS) restores mocks, stubbed globals and envs after each test. In tests that import Express's `Response` type, build fetch responses with `new globalThis.Response(...)`. `src/app.test.ts` mocks `protect` to let requests through; set `auth.deny = true` to make it answer 401. Export controller tests use a `Writable` fake response (`FakeExportResponse`) and a fake cursor (`next`/`close`); `app.test.ts` gives `lean()` a `cursor()` too. Import tests live in `spainantennasController.import.test.ts`: they use the real model (construction and `validate()` need no connection) and spy only on `insertMany`. The schema default `Date.now` is captured at load, so fake timers don't reach it.
 - swagger-jsdoc: `@openapi` JSDoc in `src/routes/*.ts`, generated to an OpenAPI file by `scripts/generateOpenapi.ts`.
 
 ## Commands (rainlogger style; missing ones still to create)
@@ -72,7 +72,7 @@ Auth (`src/controllers/authController.ts`): `protect` reads only `Authorization:
 | GET    | `/transmitter`                             | no   | paginated, `$unwind`                                                 |
 | PUT    | `/transmitter/:placementId/:transmitterId` | yes  | full transmitter                                                     |
 | DELETE | `/transmitter/:placementId/:transmitterId` | yes  | last one may be deleted                                              |
-| GET    | `/export`                                  | yes  | not paginated                                                        |
+| GET    | `/export`                                  | yes  | not paginated, streamed attachment; filters below; `?compact`        |
 | GET    | `/stats`                                   | no   | TBD, spec pending                                                    |
 
 Filters:
@@ -121,7 +121,14 @@ Import (`POST /placement/import`): run the API locally against the target DB for
   - Dry run: 200 `{ status: "success", dryRun: true, valid, failed, errors }`, or 400 with `message: "No valid placements"` when no item is valid. Nothing is written.
   - The real-import body has no `dryRun` key.
 
-Export: stream a JSON array from a Mongoose cursor as an attachment, same shape as the data files plus `_id` on placements and transmitters (re-importable).
+Export (`GET /export`, `exportPlacements`):
+
+- Middleware: `protect` -> `exportPlacementsValidation` -> `exportPlacements`.
+- Query: only `status`, `postcode`, `type`, `technology` (same list rules as `/placement`, built with `buildPlacementFilter`) and `compact` (`true`|`false`, given once). Anything else -> 400 (no pagination, `fields`, `id` or text filters). No filter = every placement.
+- Transmitter filters combine in one `$elemMatch`, and matching placements are exported with **all** their transmitters (not trimmed).
+- Body: a JSON array of lean placements sorted by `_id`. Same shape as the data files plus `_id` on placements and transmitters (re-importable; import drops the ids). Pretty output is exactly `JSON.stringify(docs, null, 2)` (the data files' layout). `compact=true` drops all whitespace.
+- Headers: `res.attachment('spainantennas-export-YYYY-MM-DDTHH-mm-ssZ.json')` (UTC, `exportFilename`), so `Content-Type: application/json; charset=utf-8`. No match -> 200 with `[]`.
+- Streaming: `find(...).sort({ _id: 1 }).lean().cursor()`. The first document is read before any header is set, so an up-front DB error still gets the 500 JSON from `catchAsync`. The rest goes through `pipeline(exportChunks(...), res)`, one chunk per placement, with backpressure. The generator closes the cursor in `finally`, also when the client disconnects. A failure after the headers: log `Export stream failed:` and `res.destroy()`; the truncated body never ends with `]`. Never buffer the whole export (512 MB dyno).
 
 ## Validation
 

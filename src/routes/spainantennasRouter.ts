@@ -4,6 +4,7 @@ import { protect } from '../controllers/authController';
 import {
   createPlacement,
   deletePlacement,
+  exportPlacements,
   getPlacements,
   getTransmitters,
   importPlacements,
@@ -14,6 +15,7 @@ import { methodNotAllowed } from '../utils/methodNotAllowed';
 import { uploadImportFile } from '../utils/uploadImportFile';
 import {
   createPlacementValidation,
+  exportPlacementsValidation,
   getPlacementsValidation,
   getTransmittersValidation,
   importPlacementsValidation,
@@ -1122,6 +1124,122 @@ router
 router
   .route('/transmitter')
   .get(getTransmittersValidation, getTransmitters)
+  .all(methodNotAllowed(['GET']));
+
+/**
+ * @openapi
+ * /export:
+ *   get:
+ *     summary: Export placements as a JSON file
+ *     description: >
+ *       Downloads placements as a JSON array attachment named
+ *       spainantennas-export-YYYY-MM-DDTHH-mm-ssZ.json (UTC). Every placement by default;
+ *       the optional filters narrow it. Not paginated, sorted by _id. Same shape as the
+ *       data files plus _id on placements and transmitters, so the file can be re-imported
+ *       with POST /placement/import (ids are dropped there). Filters are ANDed and comma
+ *       lists match any of their values (max 100 values). Transmitter filters (type,
+ *       technology) must match the same transmitter, and matching placements are exported
+ *       with all their transmitters. Each parameter may appear once and cannot be empty;
+ *       unknown parameters are rejected. The file is streamed: if the database fails
+ *       mid-export the connection is dropped, so an incomplete download is never valid JSON.
+ *     tags:
+ *       - Placement
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         description: Placement status, comma-separated list of active, inactive, unknown
+ *         schema:
+ *           type: string
+ *           example: active
+ *       - in: query
+ *         name: postcode
+ *         description: 5-digit postcode, or a comma-separated list of them (exact match)
+ *         schema:
+ *           type: string
+ *           example: "28001,28002"
+ *       - in: query
+ *         name: type
+ *         description: Comma-separated list of TV, radio
+ *         schema:
+ *           type: string
+ *           example: radio
+ *       - in: query
+ *         name: technology
+ *         description: Comma-separated list of AM-LW, AM-MW, FM, TDT, DAB+ (encode + as %2B)
+ *         schema:
+ *           type: string
+ *           example: FM,DAB%2B
+ *       - in: query
+ *         name: compact
+ *         description: When true, the JSON has no whitespace; otherwise it is indented with 2 spaces
+ *         schema:
+ *           type: string
+ *           enum: ['true', 'false']
+ *           default: 'false'
+ *     responses:
+ *       200:
+ *         description: JSON array of placements, as an attachment ([] when nothing matches)
+ *         headers:
+ *           Content-Disposition:
+ *             schema:
+ *               type: string
+ *               example: attachment; filename=spainantennas-export-2026-11-17T10-15-30Z.json
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/Placement'
+ *       400:
+ *         description: Invalid query
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationErrorResponse'
+ *             example:
+ *               status: fail
+ *               message: Invalid input data
+ *               errors:
+ *                 - type: field
+ *                   value: DAB
+ *                   msg: 'technology must be one of: AM-LW, AM-MW, FM, TDT, DAB+'
+ *                   path: technology
+ *                   location: query
+ *       401:
+ *         description: Missing, malformed or rejected token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: fail
+ *               message: You are not logged in! Please log in to get access.
+ *       429:
+ *         $ref: '#/components/responses/TooManyRequests'
+ *       500:
+ *         description: Internal server error (before the download starts)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: error
+ *               message: Internal server error
+ *       503:
+ *         description: Authentication service unavailable
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: error
+ *               message: Authentication service unavailable
+ */
+router
+  .route('/export')
+  .get(protect, exportPlacementsValidation, exportPlacements)
   .all(methodNotAllowed(['GET']));
 
 export default router;

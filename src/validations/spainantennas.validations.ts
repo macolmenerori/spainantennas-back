@@ -279,15 +279,18 @@ const objectIdListQuery = (field: string): ValidationChain =>
     `${field} must be a valid MongoDB ObjectId (or a comma-separated list of them)`
   );
 
-// Placement and transmitter filters shared by GET /placement and GET /transmitter
-const sharedFilterChains = (): ValidationChain[] => [
-  enumListQuery('status', PLACEMENT_STATUSES),
-  textQuery('siteOperator'),
+const postcodeListQuery = (): ValidationChain =>
   listQuery(
     'postcode',
     (item) => POSTCODE_REGEX.test(item),
     'postcode must be 5 digits (or a comma-separated list of them)'
-  ),
+  );
+
+// Placement and transmitter filters shared by GET /placement and GET /transmitter
+const sharedFilterChains = (): ValidationChain[] => [
+  enumListQuery('status', PLACEMENT_STATUSES),
+  textQuery('siteOperator'),
+  postcodeListQuery(),
   enumListQuery('type', TRANSMITTER_TYPES),
   enumListQuery('technology', TRANSMITTER_TECHNOLOGIES),
   textQuery('stationName'),
@@ -350,4 +353,25 @@ export const importPlacementsValidation: ValidationChain[] = [
   singleQueryValue('dryRun')
     .isIn(IMPORT_DRY_RUN_VALUES)
     .withMessage(`dryRun must be one of: ${IMPORT_DRY_RUN_VALUES.join(', ')}`)
+];
+
+// Query parameters accepted by GET /export. Anything else is rejected.
+const EXPORT_QUERY_KEYS = ['status', 'postcode', 'type', 'technology', 'compact'] as const;
+
+export const EXPORT_COMPACT_VALUES = ['true', 'false'] as const;
+
+/**
+ * GET /export query: the `status`, `postcode`, `type` and `technology` filters (same rules
+ * as GET /placement) and `compact` (`true` or `false`, given once). No pagination. Read
+ * sanitized values with `matchedData()`.
+ */
+export const exportPlacementsValidation: ValidationChain[] = [
+  query().custom(onlyKeys(EXPORT_QUERY_KEYS, 'query parameter')),
+  enumListQuery('status', PLACEMENT_STATUSES),
+  postcodeListQuery(),
+  enumListQuery('type', TRANSMITTER_TYPES),
+  enumListQuery('technology', TRANSMITTER_TECHNOLOGIES),
+  singleQueryValue('compact')
+    .isIn(EXPORT_COMPACT_VALUES)
+    .withMessage(`compact must be one of: ${EXPORT_COMPACT_VALUES.join(', ')}`)
 ];
