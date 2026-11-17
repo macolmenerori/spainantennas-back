@@ -1,11 +1,13 @@
 import { Request, Response } from 'express';
-import { matchedData, validationResult } from 'express-validator';
+import { matchedData } from 'express-validator';
 import mongoose, { PipelineStage } from 'mongoose';
 
 import PlacementModel from '../models/spainantennasModel';
 import { Location, Placement, Transmitter } from '../models/spainantennasTypes';
 import { RequestWithUser } from '../models/userTypes';
 import catchAsync from '../utils/catchAsync';
+import { checkValidation } from '../utils/checkValidation';
+import { IMPORT_BATCH_SIZE } from '../utils/consts';
 import {
   buildPlacementFilter,
   buildTransmitterPipelineFilters,
@@ -37,6 +39,15 @@ type TransmitterListQuery = TransmitterFilterQuery & {
   page?: number;
   perPage?: number;
 };
+
+// POST /placement/import query once validated by importPlacementsValidation
+type ImportQuery = { dryRun?: 'true' | 'false' };
+
+// One failed import item, by its position in the file
+type ImportError = { index: number; message: string };
+
+// A validated import item, ready for insertMany
+type ValidImportItem = { index: number; doc: Placement };
 
 // Shape of each GET /transmitter item, built from an unwound placement document
 const TRANSMITTER_ITEM_PROJECTION = {
@@ -81,22 +92,6 @@ const buildPlacementFields = (body: PlacementFieldsBody): PlacementFields => ({
   postcode: body.postcode ?? null,
   source: body.source
 });
-
-/**
- * Sends the 400 response when express-validator found errors.
- *
- * @returns The sent response when validation failed, `undefined` otherwise
- */
-const checkValidation = (req: Request, res: Response) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      status: 'fail',
-      message: 'Invalid input data',
-      errors: errors.array()
-    });
-  }
-};
 
 /**
  * Sends a Mongoose `ValidationError` as the same 400 shape express-validator produces.
@@ -300,4 +295,215 @@ export const deletePlacement = catchAsync(async (req: RequestWithUser, res: Resp
   }
 
   return res.status(204).send();
+});
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * Readies a parsed import item for the schema, in place: drops `_id` at the root and on
+ * each transmitter (the DB assigns new ids, so an export can be re-imported) and a null
+ * `lastUpdate` (the schema default stamps now, as it does for a missing one).
+ */
+const prepareImportItem = (item: Record<string, unknown>) => {
+  delete item._id;
+  if (item.lastUpdate === null) {
+    delete item.lastUpdate;
+  }
+  if (Array.isArray(item.transmitters)) {
+    for (const transmitter of item.transmitters) {
+      if (isPlainObject(transmitter)) {
+        delete transmitter._id;
+      }
+    }
+  }
+};
+
+/**
+ * One `path: message` entry for a field error of an import item. Mongoose cast errors on
+ * subdocuments are verbose (they print the whole value) and report a bad transmitter as
+ * `transmitters`, so they are rewritten: the transmitter index is recovered from the
+ * failing value, and an unknown key reads `Unknown field: <path>`.
+ */
+const describeFieldError = (
+  path: string,
+  error: mongoose.Error.ValidatorError | mongoose.Error.CastError,
+  item: Record<string, unknown>
+): string => {
+  if (!(error instanceof mongoose.Error.CastError)) {
+    return `${path}: ${error.message}`;
+  }
+
+  if (path === 'transmitters' && !Array.isArray(item.transmitters)) {
+    return 'transmitters: must be an array';
+  }
+
+  let fullPath = path;
+  if (path === 'transmitters') {
+    const index = (item.transmitters as unknown[]).indexOf(error.value);
+    if (index !== -1) {
+      fullPath = `transmitters.${index}`;
+    }
+  }
+
+  if (error.reason instanceof mongoose.Error.StrictModeError) {
+    return `Unknown field: ${fullPath}.${error.reason.path}`;
+  }
+  if (error.kind.toLowerCase() === 'embedded') {
+    return `${fullPath}: must be an object`;
+  }
+  return `${fullPath}: Cast to ${error.kind} failed`;
+};
+
+/**
+ * The error message of an import item that failed the schema: every failing path,
+ * `path: message; path: message`.
+ *
+ * @returns The message, or `undefined` when `err` is not a schema error (rethrow it)
+ */
+const formatItemError = (err: unknown, item: Record<string, unknown>): string | undefined => {
+  // An unknown root key, thrown by the constructor
+  if (err instanceof mongoose.Error.StrictModeError) {
+    return `Unknown field: ${err.path}`;
+  }
+  if (err instanceof mongoose.Error.ValidationError) {
+    return Object.entries(err.errors)
+      .map(([path, error]) => describeFieldError(path, error, item))
+      .join('; ');
+  }
+  return undefined;
+};
+
+/**
+ * Validates every import item against the Mongoose schema (casting allowed). Items that
+ * are not objects or fail the schema are collected as errors, by file index.
+ */
+const validateImportItems = async (items: unknown[]) => {
+  const valid: ValidImportItem[] = [];
+  const errors: ImportError[] = [];
+
+  for (const [index, item] of items.entries()) {
+    if (!isPlainObject(item)) {
+      errors.push({ index, message: 'Item must be an object' });
+      continue;
+    }
+
+    prepareImportItem(item);
+    try {
+      const doc = new PlacementModel(item);
+      await doc.validate();
+      valid.push({ index, doc: doc.toObject() });
+    } catch (err) {
+      const message = formatItemError(err, item);
+      if (message === undefined) {
+        throw err;
+      }
+      errors.push({ index, message });
+    }
+  }
+
+  return { valid, errors };
+};
+
+/**
+ * Inserts validated items in batches of `IMPORT_BATCH_SIZE`, unordered, without
+ * re-validating (`lean`). Per-document write errors are added to `errors` by file index;
+ * any other DB error is rethrown, leaving earlier batches inserted.
+ *
+ * @returns How many placements were inserted
+ */
+const insertImportItems = async (valid: ValidImportItem[], errors: ImportError[]) => {
+  let inserted = 0;
+
+  for (let start = 0; start < valid.length; start += IMPORT_BATCH_SIZE) {
+    const batch = valid.slice(start, start + IMPORT_BATCH_SIZE);
+    try {
+      await PlacementModel.insertMany(
+        batch.map((item) => item.doc),
+        { ordered: false, lean: true }
+      );
+      inserted += batch.length;
+    } catch (err) {
+      const writeErrors =
+        err instanceof mongoose.mongo.MongoBulkWriteError ? [err.writeErrors].flat() : [];
+      if (writeErrors.length === 0) {
+        // eslint-disable-next-line no-console
+        console.error(`Import aborted after inserting ${inserted} placements`);
+        throw err;
+      }
+      // writeError.index is the position inside the batch
+      for (const writeError of writeErrors) {
+        errors.push({
+          index: batch[writeError.index].index,
+          message: writeError.errmsg ?? 'Write failed'
+        });
+      }
+      inserted += (err as mongoose.mongo.MongoBulkWriteError).insertedCount;
+    }
+  }
+
+  return inserted;
+};
+
+/**
+ * Parses the uploaded import file: strict UTF-8 (a BOM is dropped), then JSON.
+ *
+ * @returns The parsed value, or `undefined` when the file is not valid UTF-8 JSON
+ */
+const parseImportFile = (buffer: Buffer): unknown => {
+  try {
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(buffer));
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Imports placements from the uploaded JSON file (`req.file`, set by `uploadImportFile`):
+ * an array in the data-file format. Each item is validated with the Mongoose schema;
+ * valid ones are inserted (new ids, the file's `lastUpdate` kept), invalid ones are
+ * reported by index. No duplicate detection. With `?dryRun=true` nothing is written.
+ *
+ * Responds:
+ * - 201 `{ status, inserted, failed, errors }` when at least one placement was inserted
+ * - 200 with zero counts for an empty array
+ * - 400 when nothing was inserted (same keys plus `message`), the file is missing, not
+ *   valid JSON or not an array
+ * - dry run: 200 `{ status, dryRun, valid, failed, errors }`, or 400 when no item is valid
+ */
+export const importPlacements = catchAsync(async (req: RequestWithUser, res: Response) => {
+  if (!req.file) {
+    return res.status(400).json({ status: 'fail', message: 'No file uploaded' });
+  }
+
+  const items = parseImportFile(req.file.buffer);
+  if (items === undefined) {
+    return res.status(400).json({ status: 'fail', message: 'Invalid JSON file' });
+  }
+  if (!Array.isArray(items)) {
+    return res.status(400).json({ status: 'fail', message: 'File must contain a JSON array' });
+  }
+
+  const { dryRun } = matchedData(req, { locations: ['query'] }) as ImportQuery;
+  const { valid, errors } = await validateImportItems(items);
+
+  if (dryRun === 'true') {
+    const summary = { dryRun: true, valid: valid.length, failed: errors.length, errors };
+    if (valid.length === 0 && errors.length > 0) {
+      return res.status(400).json({ status: 'fail', message: 'No valid placements', ...summary });
+    }
+    return res.status(200).json({ status: 'success', ...summary });
+  }
+
+  const inserted = await insertImportItems(valid, errors);
+  errors.sort((a, b) => a.index - b.index);
+  const summary = { inserted, failed: errors.length, errors };
+
+  if (inserted > 0) {
+    return res.status(201).json({ status: 'success', ...summary });
+  }
+  if (errors.length > 0) {
+    return res.status(400).json({ status: 'fail', message: 'No placements imported', ...summary });
+  }
+  return res.status(200).json({ status: 'success', ...summary });
 });

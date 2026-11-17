@@ -6,13 +6,17 @@ import {
   deletePlacement,
   getPlacements,
   getTransmitters,
+  importPlacements,
   updatePlacement
 } from '../controllers/spainantennasController';
+import { rejectInvalidRequest } from '../utils/checkValidation';
 import { methodNotAllowed } from '../utils/methodNotAllowed';
+import { uploadImportFile } from '../utils/uploadImportFile';
 import {
   createPlacementValidation,
   getPlacementsValidation,
   getTransmittersValidation,
+  importPlacementsValidation,
   placementIdValidation,
   updatePlacementValidation
 } from '../validations/spainantennas.validations';
@@ -338,6 +342,64 @@ import {
  *               location:
  *                 type: string
  *                 example: body
+ *     ImportError:
+ *       type: object
+ *       properties:
+ *         index:
+ *           type: integer
+ *           description: Position of the item in the file (0-based)
+ *           example: 3
+ *         message:
+ *           type: string
+ *           description: Every failing path of the item, separated by "; "
+ *           example: 'location.lat: lat must be between 27 and 44; Unknown field: transmitters.0.foo'
+ *     ImportSummary:
+ *       type: object
+ *       properties:
+ *         status:
+ *           type: string
+ *           enum: [success, fail]
+ *           example: success
+ *         message:
+ *           type: string
+ *           description: Only on 400
+ *           example: No placements imported
+ *         inserted:
+ *           type: integer
+ *           example: 4480
+ *         failed:
+ *           type: integer
+ *           example: 1
+ *         errors:
+ *           type: array
+ *           description: Failed items, sorted by index
+ *           items:
+ *             $ref: '#/components/schemas/ImportError'
+ *     ImportDryRunSummary:
+ *       type: object
+ *       properties:
+ *         status:
+ *           type: string
+ *           enum: [success, fail]
+ *           example: success
+ *         message:
+ *           type: string
+ *           description: Only on 400
+ *           example: No valid placements
+ *         dryRun:
+ *           type: boolean
+ *           example: true
+ *         valid:
+ *           type: integer
+ *           example: 4480
+ *         failed:
+ *           type: integer
+ *           example: 1
+ *         errors:
+ *           type: array
+ *           description: Failed items, sorted by index
+ *           items:
+ *             $ref: '#/components/schemas/ImportError'
  */
 
 const router = express.Router();
@@ -580,6 +642,167 @@ router
 
 /**
  * @openapi
+ * /placement/import:
+ *   post:
+ *     summary: Import placements from a JSON file
+ *     description: >
+ *       Imports a JSON array of placements in the data-file format (the export format is
+ *       accepted too). Each item is validated with the database schema (types are cast, so
+ *       "40.4" becomes 40.4); valid items are inserted and invalid ones reported by index.
+ *       Incoming _id values are ignored (new ids are assigned) and each item's lastUpdate is
+ *       kept (now when missing or null). No duplicate detection: importing a file twice
+ *       inserts its placements twice. Meant to run locally against the target database for
+ *       big files (Heroku's 30 s request limit).
+ *     tags:
+ *       - Placement
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: dryRun
+ *         required: false
+ *         description: When true, validates every item and reports the summary without writing
+ *         schema:
+ *           type: string
+ *           enum: ['true', 'false']
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - file
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *                 description: >
+ *                   JSON array of placements, sent as application/json (with curl:
+ *                   -F "file=@TV.json;type=application/json"). At most IMPORT_MAX_SIZE_MB.
+ *                   No other field is allowed.
+ *     responses:
+ *       200:
+ *         description: >
+ *           Dry run with at least one valid item (ImportDryRunSummary), or an empty array
+ *           (ImportSummary or ImportDryRunSummary with zero counts)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               oneOf:
+ *                 - $ref: '#/components/schemas/ImportDryRunSummary'
+ *                 - $ref: '#/components/schemas/ImportSummary'
+ *             example:
+ *               status: success
+ *               dryRun: true
+ *               valid: 4480
+ *               failed: 1
+ *               errors:
+ *                 - index: 3
+ *                   message: 'location.lat: lat must be between 27 and 44'
+ *       201:
+ *         description: At least one placement inserted; failed items listed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ImportSummary'
+ *             example:
+ *               status: success
+ *               inserted: 4480
+ *               failed: 1
+ *               errors:
+ *                 - index: 3
+ *                   message: 'location.lat: lat must be between 27 and 44'
+ *       400:
+ *         description: >
+ *           No item inserted (ImportSummary) or, in a dry run, none valid
+ *           (ImportDryRunSummary); invalid query (ValidationErrorResponse); or a bad upload
+ *           (ErrorResponse): no file, extra fields or files, malformed multipart, invalid
+ *           JSON, not an array
+ *         content:
+ *           application/json:
+ *             schema:
+ *               oneOf:
+ *                 - $ref: '#/components/schemas/ImportSummary'
+ *                 - $ref: '#/components/schemas/ImportDryRunSummary'
+ *                 - $ref: '#/components/schemas/ValidationErrorResponse'
+ *                 - $ref: '#/components/schemas/ErrorResponse'
+ *             examples:
+ *               nothingImported:
+ *                 value:
+ *                   status: fail
+ *                   message: No placements imported
+ *                   inserted: 0
+ *                   failed: 1
+ *                   errors:
+ *                     - index: 0
+ *                       message: 'Unknown field: foo'
+ *               invalidJson:
+ *                 value:
+ *                   status: fail
+ *                   message: Invalid JSON file
+ *       401:
+ *         description: Missing, malformed or rejected token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: fail
+ *               message: You are not logged in! Please log in to get access.
+ *       413:
+ *         description: File larger than IMPORT_MAX_SIZE_MB
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: fail
+ *               message: File too large
+ *       415:
+ *         description: File not sent as application/json
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: fail
+ *               message: File must be application/json
+ *       429:
+ *         $ref: '#/components/responses/TooManyRequests'
+ *       500:
+ *         description: Internal server error (earlier batches may already be inserted)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: error
+ *               message: Internal server error
+ *       503:
+ *         description: Authentication service unavailable
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: error
+ *               message: Authentication service unavailable
+ */
+// protect and the query check run before the upload: no file is buffered for them
+router
+  .route('/placement/import')
+  .post(
+    protect,
+    importPlacementsValidation,
+    rejectInvalidRequest,
+    uploadImportFile,
+    importPlacements
+  )
+  .all(methodNotAllowed(['POST']));
+
+/**
+ * @openapi
  * /placement/{id}:
  *   put:
  *     summary: Update a placement
@@ -766,7 +989,7 @@ router
  *               status: error
  *               message: Authentication service unavailable
  */
-// Register /placement/import before this route, or its POST gets this route's 405
+// /placement/import is registered above: its POST would otherwise get this route's 405
 router
   .route('/placement/:id')
   .put(protect, updatePlacementValidation, updatePlacement)

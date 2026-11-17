@@ -13,7 +13,8 @@ const checkEnvVars = (): boolean => {
     'RATELIMIT_WINDOWMS',
     'CORS_WHITELIST',
     'DEFAULT_PERPAGE',
-    'MAX_PERPAGE'
+    'MAX_PERPAGE',
+    'IMPORT_MAX_SIZE_MB'
   ];
 
   const missingEnvVars: string[] = [];
@@ -39,7 +40,8 @@ const checkEnvVars = (): boolean => {
     'RATELIMIT_MAXCONNECTIONS',
     'RATELIMIT_WINDOWMS',
     'DEFAULT_PERPAGE',
-    'MAX_PERPAGE'
+    'MAX_PERPAGE',
+    'IMPORT_MAX_SIZE_MB'
   ].filter((envVar) => !isPositiveInteger(process.env[envVar]!));
   if (notPositive.length > 0) {
     console.error(`${notPositive.join(', ')} must be positive integers`);

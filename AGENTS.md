@@ -12,7 +12,7 @@ Express + TypeScript API over MongoDB (Mongoose) serving radio/TV antenna sites 
 - Single `tsconfig.json`: `module: nodenext` (emits CJS because package.json has no `"type": "module"`), `target: es2025` (`RegExp.escape` available), `isolatedModules`, `noImplicitOverride`, `noFallthroughCasesInSwitch`. No `verbatimModuleSyntax` (rejects `import` in CJS-mode files). No source maps. No path alias yet (tsc doesn't rewrite `@/` imports; use relative imports).
 - Tests are co-located as `src/**/*.test.ts` and excluded from `tsconfig.json`, so `tsc` never emits them (and `pnpm types` doesn't check them; neither does it check `scripts/`).
 - `pnpm-workspace.yaml` `allowBuilds` lists packages allowed (or explicitly denied) to run install scripts; esbuild (via tsx) is denied, its binary works without it.
-- Express 5, Mongoose, express-validator, helmet, cors (origin whitelist), express-rate-limit on `/api`, `@exortek/express-mongo-sanitize`, compression, multer (import upload). All wired except multer (comes with import). Middleware order in `app.ts`, keep it:
+- Express 5, Mongoose, express-validator, helmet, cors (origin whitelist), express-rate-limit on `/api`, `@exortek/express-mongo-sanitize`, compression, multer (import upload, route-level only: `src/utils/uploadImportFile.ts`, never global). Middleware order in `app.ts`, keep it:
   1. `app.set('trust proxy', 1)`: Heroku's router is the one proxy, so `req.ip` is the real client (rate-limit key). Hard-coded, Heroku is the only target.
   2. cors (+ `app.options`): first, so preflights end before the limiter and 429s carry CORS headers. `exposedHeaders: RateLimit, RateLimit-Policy, Retry-After`.
   3. `helmet()` with defaults (CSP on).
@@ -20,9 +20,9 @@ Express + TypeScript API over MongoDB (Mongoose) serving radio/TV antenna sites 
   5. `express.json({ limit: '1mb' })`. No `express.urlencoded` (JSON-only API).
   6. `mongoSanitize({ patterns: [/\$/g], replaceWith: '_' })`: defense in depth after the body parser. Silently replaces `$` with `_` in body and query keys and values (`$where` key -> `_where`, then rejected by `onlyKeys`). Control chars (newlines) are kept. Params are not sanitized (every `:id` is `isMongoId`-validated).
   7. `compression()` defaults.
-- `dotenv` loads `config.env` (gitignored) at the very top of `server.ts`, before importing `app` (which reads env when it loads); keep `config.env.example` (committed) updated. `checkEnvVars()` exits on missing vars, on a non-positive-integer `AUTH_TIMEOUT_MS`, `RATELIMIT_MAXCONNECTIONS`, `RATELIMIT_WINDOWMS`, `DEFAULT_PERPAGE` or `MAX_PERPAGE`, and when `DEFAULT_PERPAGE > MAX_PERPAGE`.
+- `dotenv` loads `config.env` (gitignored) at the very top of `server.ts`, before importing `app` (which reads env when it loads); keep `config.env.example` (committed) updated. `checkEnvVars()` exits on missing vars, on a non-positive-integer `AUTH_TIMEOUT_MS`, `RATELIMIT_MAXCONNECTIONS`, `RATELIMIT_WINDOWMS`, `DEFAULT_PERPAGE`, `MAX_PERPAGE` or `IMPORT_MAX_SIZE_MB`, and when `DEFAULT_PERPAGE > MAX_PERPAGE`.
 - ESLint (flat config, typescript-eslint, prettier, simple-import-sort) + Prettier.
-- Vitest, no real DB (mock Mongoose models and `fetch`). Unit tests call handlers with fake req/res; `src/app.test.ts` drives the real `app` in-process with supertest (middleware, wiring), stubbing env then `vi.resetModules()` + dynamic `import('./app')` because `app.ts` reads env when it loads. `vitest.config.mts` (`.mts` because the package is CJS) restores mocks, stubbed globals and envs after each test. In tests that import Express's `Response` type, build fetch responses with `new globalThis.Response(...)`.
+- Vitest, no real DB (mock Mongoose models and `fetch`). Unit tests call handlers with fake req/res; `src/app.test.ts` drives the real `app` in-process with supertest (middleware, wiring), stubbing env then `vi.resetModules()` + dynamic `import('./app')` because `app.ts` reads env when it loads. `vitest.config.mts` (`.mts` because the package is CJS) restores mocks, stubbed globals and envs after each test. In tests that import Express's `Response` type, build fetch responses with `new globalThis.Response(...)`. `src/app.test.ts` mocks `protect` to let requests through; set `auth.deny = true` to make it answer 401. Import tests live in `spainantennasController.import.test.ts`: they use the real model (construction and `validate()` need no connection) and spy only on `insertMany`. The schema default `Date.now` is captured at load, so fake timers don't reach it.
 - swagger-jsdoc: `@openapi` JSDoc in `src/routes/*.ts`, generated to an OpenAPI file by `scripts/generateOpenapi.ts`.
 
 ## Commands (rainlogger style; missing ones still to create)
@@ -36,7 +36,7 @@ Express + TypeScript API over MongoDB (Mongoose) serving radio/TV antenna sites 
 
 ## Structure
 
-`src/server.ts` (dotenv, env check, Mongo connect, listen) · `src/app.ts` (middleware, `/healthcheck`, routers, 404, `errorHandler` last) · `src/routes/spainantennasRouter.ts` (one router for every resource, mounted at `/api/v1`, holds the `@openapi` components) · `src/controllers/` (`spainantennasController.ts`, `authController.ts` with `protect`) · `src/models/` (schema + types) · `src/validations/spainantennas.validations.ts` (all chains) · `src/utils/` (`catchAsync`, `methodNotAllowed`, `checkEnvVars`, `errorHandler`, pagination, filter builders).
+`src/server.ts` (dotenv, env check, Mongo connect, listen) · `src/app.ts` (middleware, `/healthcheck`, routers, 404, `errorHandler` last) · `src/routes/spainantennasRouter.ts` (one router for every resource, mounted at `/api/v1`, holds the `@openapi` components) · `src/controllers/` (`spainantennasController.ts`, `authController.ts` with `protect`) · `src/models/` (schema + types) · `src/validations/spainantennas.validations.ts` (all chains) · `src/utils/` (`catchAsync`, `checkValidation` (+ `rejectInvalidRequest` middleware), `methodNotAllowed`, `checkEnvVars`, `errorHandler`, `uploadImportFile`, pagination, filter builders).
 
 ## Data model
 
@@ -67,7 +67,7 @@ Auth (`src/controllers/authController.ts`): `protect` reads only `Authorization:
 | POST   | `/placement`                               | yes  | full placement, transmitters optional                                |
 | PUT    | `/placement/:id`                           | yes  | full replace of placement fields only; `transmitters` in body -> 400 |
 | DELETE | `/placement/:id`                           | yes  |                                                                      |
-| POST   | `/placement/import`                        | yes  | multipart field `file` (JSON array, data-file format)                |
+| POST   | `/placement/import`                        | yes  | multipart field `file` (JSON array, data-file format); `?dryRun`     |
 | POST   | `/placement/:id/transmitter`               | yes  | add one transmitter                                                  |
 | GET    | `/transmitter`                             | no   | paginated, `$unwind`                                                 |
 | PUT    | `/transmitter/:placementId/:transmitterId` | yes  | full transmitter                                                     |
@@ -94,7 +94,32 @@ Responses:
 - Validation 400: `{ status: "fail", message: "Invalid input data", errors }`, `errors` from `validationResult().array()`. A Mongoose `ValidationError` on save is mapped to the same shape (`type`, `msg`, `path`, `location`).
 - Create: 201 with the single shape.
 
-Import: run the API locally against the target DB for the big `data/*.json` files (Heroku has a 30 s request limit and 512 MB RAM). Size limit `IMPORT_MAX_SIZE_MB`; global `express.json` limit stays small. Validate each item with the Mongoose schema, `insertMany` in batches with `ordered: false`, ignore incoming `_id`s, respond `{ inserted, failed, errors: [{ index, message }] }`. No duplicate detection.
+Import (`POST /placement/import`): run the API locally against the target DB for the big `data/*.json` files (Heroku has a 30 s request limit and 512 MB RAM; TV.json is 61 MB and needs about 550 MB RSS). The global `express.json` limit stays small.
+
+- Middleware order: `protect` -> `importPlacementsValidation` -> `rejectInvalidRequest` -> `uploadImportFile` -> `importPlacements`. Auth and query errors are answered before any file is buffered. The route is registered before `/placement/:id`.
+- Query: only `dryRun` (`true`|`false`, given once); anything else -> 400 in the express-validator shape.
+- Upload (multer `memoryStorage`, built per request from `IMPORT_MAX_SIZE_MB`): exactly one file in field `file`, mimetype `application/json` (curl: `-F "file=@TV.json;type=application/json"`), no text fields (`files: 1`, `fields: 0`).
+  - Wrong mimetype -> 415 `File must be application/json`.
+  - Over the limit -> 413 `File too large`.
+  - Extra field or file, wrong field name, malformed multipart -> 400.
+  - No file or a non-multipart body -> 400 `No file uploaded`.
+- File: strict UTF-8 (BOM dropped) + `JSON.parse`, else 400 `Invalid JSON file`. Not an array -> 400 `File must contain a JSON array`. `[]` -> 200 with zero counts.
+- Items: Mongoose schema only, casting allowed (`"40.4"` -> 40.4, unlike POST /placement). Before validating, each item is prepared:
+  - A non-object item fails with `Item must be an object`.
+  - `_id` is dropped at the root and on transmitters (new ids; an export re-imports as new documents).
+  - A null `lastUpdate` is dropped, so the schema default stamps now, as for a missing one. A present one is kept.
+  - Then `new PlacementModel(item)` + `validate()`. Catch `StrictModeError` (unknown root key) and `ValidationError`; anything else is rethrown.
+- Error message per item: every failing path, `path: msg; path: msg`. Cast errors are rewritten (Mongoose prints whole values and reports a bad transmitter only as `transmitters`; the index is recovered from the failing value):
+  - unknown key -> `Unknown field: transmitters.1.foo`
+  - wrong type -> `transmitters.1: must be an object`, `transmitters: must be an array`
+  - bad value -> `lastUpdate: Cast to date failed`
+    No cap; `errors` sorted by `index`.
+- Insert: validate all items first, then `insertMany(docs, { ordered: false, lean: true })` in batches of `IMPORT_BATCH_SIZE` (500, `src/utils/consts.ts`). `lean` skips re-validation. `MongoBulkWriteError.writeErrors[].index` is the index inside the batch; it is mapped back to the file index (`errmsg` as message), and `insertedCount` is added. Any other DB error -> 500 via `catchAsync`, after logging how many were inserted; earlier batches stay (no rollback). No duplicate detection.
+- Responses (flat keys):
+  - 201 `{ status: "success", inserted, failed, errors: [{ index, message }] }` when anything was inserted.
+  - 400 `{ status: "fail", message: "No placements imported", inserted: 0, failed, errors }` when nothing was.
+  - Dry run: 200 `{ status: "success", dryRun: true, valid, failed, errors }`, or 400 with `message: "No valid placements"` when no item is valid. Nothing is written.
+  - The real-import body has no `dryRun` key.
 
 Export: stream a JSON array from a Mongoose cursor as an attachment, same shape as the data files plus `_id` on placements and transmitters (re-importable).
 

@@ -334,3 +334,20 @@ export const getTransmittersValidation: ValidationChain[] = [
   objectIdListQuery('placementId'),
   ...sharedFilterChains()
 ];
+
+// Query parameters accepted by POST /placement/import. Anything else is rejected.
+const IMPORT_QUERY_KEYS = ['dryRun'] as const;
+
+export const IMPORT_DRY_RUN_VALUES = ['true', 'false'] as const;
+
+/**
+ * POST /placement/import query: only `dryRun` (`true` or `false`, given once). Runs before
+ * the upload, so a bad query is rejected without buffering the file. Read the value with
+ * `matchedData()`.
+ */
+export const importPlacementsValidation: ValidationChain[] = [
+  query().custom(onlyKeys(IMPORT_QUERY_KEYS, 'query parameter')),
+  singleQueryValue('dryRun')
+    .isIn(IMPORT_DRY_RUN_VALUES)
+    .withMessage(`dryRun must be one of: ${IMPORT_DRY_RUN_VALUES.join(', ')}`)
+];
