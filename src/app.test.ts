@@ -59,7 +59,16 @@ beforeEach(async () => {
   app = (await import('./app')).default;
   model = (await import('./models/spainantennasModel')).default as unknown as typeof model;
 
-  lean = vi.fn().mockResolvedValue([placement(1)]);
+  // find().lean() resolves for the lists; the export reads find().lean().cursor()
+  lean = vi.fn().mockImplementation(() => {
+    const docs = [placement(1), placement(2)];
+    return Object.assign(Promise.resolve([placement(1)]), {
+      cursor: () => ({
+        next: async () => docs.shift() ?? null,
+        close: async () => undefined
+      })
+    });
+  });
   const query = { sort: vi.fn(), skip: vi.fn(), limit: vi.fn(), lean };
   query.sort.mockReturnValue(query);
   query.skip.mockReturnValue(query);
@@ -224,6 +233,48 @@ describe('fallbacks', () => {
     expect(res.status).toBe(405);
     expect(res.headers.allow).toBe('GET');
     expect(res.body).toEqual({ status: 'fail', message: 'Method not allowed' });
+  });
+});
+
+describe('export', () => {
+  const EXPORT_URL = '/api/v1/export';
+
+  it('downloads the placements as a JSON attachment', async () => {
+    const res = await request(app).get(`${EXPORT_URL}?technology=FM,DAB%2B&compact=true`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toBe('application/json; charset=utf-8');
+    expect(res.headers['content-disposition']).toMatch(
+      /^attachment; filename=spainantennas-export-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\.json$/
+    );
+    expect(res.text).toBe(JSON.stringify([placement(1), placement(2)]));
+    expect(model.find).toHaveBeenCalledWith({
+      transmitters: { $elemMatch: { technology: { $in: ['FM', 'DAB+'] } } }
+    });
+  });
+
+  it('answers 401 from protect', async () => {
+    auth.deny = true;
+    const res = await request(app).get(EXPORT_URL);
+
+    expect(res.status).toBe(401);
+    expect(model.find).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown query parameters', async () => {
+    const res = await request(app).get(`${EXPORT_URL}?page=1`);
+
+    expect(res.status).toBe(400);
+    expect(res.body.errors).toEqual([
+      expect.objectContaining({ msg: 'Unknown query parameter(s): page' })
+    ]);
+  });
+
+  it('allows only GET', async () => {
+    const res = await request(app).post(EXPORT_URL).send({});
+
+    expect(res.status).toBe(405);
+    expect(res.headers.allow).toBe('GET');
   });
 });
 

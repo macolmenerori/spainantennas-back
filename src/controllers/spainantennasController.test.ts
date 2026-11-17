@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
+import { Writable } from 'stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import PlacementModel from '../models/spainantennasModel';
@@ -7,6 +8,7 @@ import { RequestWithUser } from '../models/userTypes';
 import { accentInsensitiveRegex } from '../utils/filters';
 import {
   createPlacementValidation,
+  exportPlacementsValidation,
   getPlacementsValidation,
   getTransmittersValidation,
   placementIdValidation,
@@ -16,6 +18,8 @@ import {
 import {
   createPlacement,
   deletePlacement,
+  exportFilename,
+  exportPlacements,
   getPlacements,
   getTransmitters,
   updatePlacement
@@ -802,5 +806,206 @@ describe('getTransmitters', () => {
 
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith({ status: 'error', message: 'Internal server error' });
+  });
+});
+
+describe('exportFilename', () => {
+  it('names the file after the UTC time, without colons or milliseconds', () => {
+    expect(exportFilename(new Date('2026-11-17T09:05:03.123Z'))).toBe(
+      'spainantennas-export-2026-11-17T09-05-03Z.json'
+    );
+  });
+});
+
+/**
+ * Writable stand-in for the Express response: collects the streamed body, and resolves
+ * `done` once the handler finishes (json/send, end of stream or destroy).
+ */
+class FakeExportResponse extends Writable {
+  body = '';
+  status = vi.fn().mockReturnValue(this);
+  attachment = vi.fn().mockReturnValue(this);
+  json = vi.fn();
+  send = vi.fn();
+  done: Promise<void>;
+
+  constructor() {
+    super();
+    this.done = new Promise((resolve) => {
+      this.json.mockImplementation(() => {
+        resolve();
+        return this;
+      });
+      this.send.mockImplementation(() => {
+        resolve();
+        return this;
+      });
+      this.on('finish', () => resolve());
+      this.on('close', () => resolve());
+    });
+  }
+
+  override _write(chunk: Buffer, _encoding: string, callback: () => void) {
+    this.body += chunk.toString();
+    callback();
+  }
+}
+
+/**
+ * Cursor stand-in over `docs`. When `failAt` is set, the next() call with that index
+ * rejects.
+ */
+const fakeCursor = (docs: object[], failAt?: number) => {
+  let calls = 0;
+  return {
+    next: vi.fn(async () => {
+      const call = calls++;
+      if (call === failAt) {
+        throw new Error('cursor failed');
+      }
+      return docs[call] ?? null;
+    }),
+    close: vi.fn().mockResolvedValue(undefined)
+  };
+};
+
+describe('exportPlacements', () => {
+  const docs = [1, 2].map((i) => ({
+    _id: new mongoose.Types.ObjectId(`507f1f77bcf86cd79943901${i}`),
+    status: 'active',
+    siteOperator: 'Cellnex',
+    location: { lat: 40.4168, lon: -3.7038, altM: 657 },
+    postcode: '28001',
+    transmitters: [
+      { _id: new mongoose.Types.ObjectId(`507f1f77bcf86cd79943902${i}`), ...transmitter() }
+    ],
+    lastUpdate: NOW,
+    source: 'Ministry station data\nsecond line'
+  }));
+
+  // Chainable stand-in for the Mongoose query returned by find()
+  const query = { sort: vi.fn(), lean: vi.fn(), cursor: vi.fn() };
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  const runExport = async (
+    queryParams: Record<string, unknown>,
+    cursor: ReturnType<typeof fakeCursor> = fakeCursor(docs)
+  ) => {
+    query.cursor.mockReturnValue(cursor);
+    const req = { query: queryParams } as unknown as RequestWithUser;
+    for (const chain of exportPlacementsValidation) {
+      await chain.run(req);
+    }
+    const res = new FakeExportResponse();
+    exportPlacements(req, res as unknown as Response, vi.fn());
+    await res.done;
+    return res;
+  };
+
+  beforeEach(() => {
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    query.sort.mockReturnValue(query);
+    query.lean.mockReturnValue(query);
+    findMock.mockReset();
+    findMock.mockReturnValue(query as never);
+  });
+
+  it('streams every placement, pretty-printed like the data files, sorted by _id', async () => {
+    const cursor = fakeCursor(docs);
+    const res = await runExport({}, cursor);
+
+    expect(findMock).toHaveBeenCalledWith({});
+    expect(query.sort).toHaveBeenCalledWith({ _id: 1 });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.attachment).toHaveBeenCalledWith(
+      expect.stringMatching(/^spainantennas-export-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\.json$/)
+    );
+    expect(res.body).toBe(JSON.stringify(docs, null, 2));
+    expect(JSON.parse(res.body)[0]).toMatchObject({
+      _id: '507f1f77bcf86cd799439011',
+      transmitters: [{ _id: '507f1f77bcf86cd799439021' }],
+      lastUpdate: NOW.toISOString()
+    });
+    expect(cursor.close).toHaveBeenCalled();
+  });
+
+  it('writes compact JSON with compact=true', async () => {
+    const res = await runExport({ compact: 'true' });
+
+    expect(res.body).toBe(JSON.stringify(docs));
+  });
+
+  it('pretty-prints with compact=false', async () => {
+    const res = await runExport({ compact: 'false' });
+
+    expect(res.body).toBe(JSON.stringify(docs, null, 2));
+  });
+
+  it('pretty-prints a single placement', async () => {
+    const res = await runExport({}, fakeCursor(docs.slice(0, 1)));
+
+    expect(res.body).toBe(JSON.stringify(docs.slice(0, 1), null, 2));
+  });
+
+  it('builds the filter from status, postcode and one transmitter $elemMatch', async () => {
+    await runExport({
+      status: 'active,inactive',
+      postcode: '28001',
+      type: 'radio',
+      technology: 'FM,DAB+',
+      compact: 'true'
+    });
+
+    expect(findMock).toHaveBeenCalledWith({
+      status: { $in: ['active', 'inactive'] },
+      postcode: { $in: ['28001'] },
+      transmitters: {
+        $elemMatch: { type: { $in: ['radio'] }, technology: { $in: ['FM', 'DAB+'] } }
+      }
+    });
+  });
+
+  it('sends an empty array attachment when nothing matches', async () => {
+    const cursor = fakeCursor([]);
+    const res = await runExport({ status: 'inactive' }, cursor);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.attachment).toHaveBeenCalled();
+    expect(res.send).toHaveBeenCalledWith('[]');
+    expect(cursor.close).toHaveBeenCalled();
+  });
+
+  it('responds 400 without querying the DB when the query is invalid', async () => {
+    const res = await runExport({ page: '1' });
+
+    expect(findMock).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'fail', message: 'Invalid input data' })
+    );
+  });
+
+  it('responds 500 JSON when the DB fails before the first placement', async () => {
+    const cursor = fakeCursor(docs, 0);
+    const res = await runExport({}, cursor);
+
+    expect(res.attachment).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ status: 'error', message: 'Internal server error' });
+    expect(cursor.close).toHaveBeenCalled();
+  });
+
+  it('destroys the response when the DB fails mid-export', async () => {
+    const cursor = fakeCursor(docs, 1);
+    const res = await runExport({}, cursor);
+    // The response closes before the handler's catch block logs
+    await vi.waitFor(() =>
+      expect(consoleErrorSpy).toHaveBeenCalledWith('Export stream failed:', expect.any(Error))
+    );
+
+    expect(res.destroyed).toBe(true);
+    expect(res.json).not.toHaveBeenCalled();
+    expect(res.body.endsWith(']')).toBe(false);
+    expect(cursor.close).toHaveBeenCalled();
   });
 });

@@ -6,6 +6,7 @@ import { MAX_NAME_LENGTH, MAX_SOURCE_LENGTH } from '../models/spainantennasTypes
 
 import {
   createPlacementValidation,
+  exportPlacementsValidation,
   getPlacementsValidation,
   getTransmittersValidation,
   importPlacementsValidation,
@@ -661,5 +662,96 @@ describe('importPlacementsValidation', () => {
     const { errors } = await validateQuery({ dryRun: 'true', page: '1' });
 
     expect(errors).toEqual([expect.objectContaining({ msg: 'Unknown query parameter(s): page' })]);
+  });
+});
+
+describe('exportPlacementsValidation', () => {
+  const validateQuery = async (query: Record<string, unknown>) => {
+    const req = { query } as unknown as Request;
+    for (const chain of exportPlacementsValidation) {
+      await chain.run(req);
+    }
+    return {
+      errors: validationResult(req).array() as FieldValidationError[],
+      data: matchedData(req, { locations: ['query'] })
+    };
+  };
+
+  const expectQueryError = async (query: Record<string, unknown>, path: string, msg: string) => {
+    const { errors } = await validateQuery(query);
+    expect(errors).toEqual([expect.objectContaining({ path, location: 'query', msg })]);
+  };
+
+  it('accepts an empty query', async () => {
+    expect((await validateQuery({})).errors).toEqual([]);
+  });
+
+  it('accepts every parameter and sanitizes the lists', async () => {
+    const { errors, data } = await validateQuery({
+      status: 'active, inactive',
+      postcode: '28001,08001',
+      type: 'radio',
+      technology: 'FM,DAB+',
+      compact: 'true'
+    });
+
+    expect(errors).toEqual([]);
+    expect(data).toMatchObject({
+      status: ['active', 'inactive'],
+      postcode: ['28001', '08001'],
+      type: ['radio'],
+      technology: ['FM', 'DAB+'],
+      compact: 'true'
+    });
+  });
+
+  it.each(['true', 'false'])('accepts compact=%s', async (value) => {
+    const { errors, data } = await validateQuery({ compact: value });
+
+    expect(errors).toEqual([]);
+    expect(data).toMatchObject({ compact: value });
+  });
+
+  it.each(['yes', '', 'TRUE', '1'])('rejects compact=%j', async (value) => {
+    await expectQueryError({ compact: value }, 'compact', 'compact must be one of: true, false');
+  });
+
+  it.each(['page', 'perPage', 'fields', 'id', 'siteOperator', 'stationName', 'broadcaster'])(
+    'rejects the %s parameter',
+    async (key) => {
+      const { errors } = await validateQuery({ [key]: '1' });
+
+      expect(errors).toEqual([
+        expect.objectContaining({ msg: `Unknown query parameter(s): ${key}` })
+      ]);
+    }
+  );
+
+  it.each([
+    ['status', 'retired', 'status must be one of: active, inactive, unknown'],
+    ['type', 'tv', 'type must be one of: TV, radio'],
+    ['technology', 'DAB', 'technology must be one of: AM-LW, AM-MW, FM, TDT, DAB+'],
+    ['postcode', '2800', 'postcode must be 5 digits (or a comma-separated list of them)'],
+    ['status', '', 'status cannot be empty'],
+    ['postcode', '28001,', 'postcode cannot contain empty values']
+  ])('rejects %s=%j', async (key, value, msg) => {
+    await expectQueryError({ [key]: value }, key, msg);
+  });
+
+  it.each(['status', 'postcode', 'type', 'technology', 'compact'])(
+    'rejects a repeated %s',
+    async (key) => {
+      await expectQueryError({ [key]: ['a', 'b'] }, key, `${key} must be given only once`);
+    }
+  );
+
+  it('rejects a list over the item limit', async () => {
+    const postcodes = Array.from({ length: 101 }, (_, i) => String(10000 + i)).join(',');
+
+    await expectQueryError(
+      { postcode: postcodes },
+      'postcode',
+      'postcode accepts at most 100 values'
+    );
   });
 });
