@@ -114,15 +114,21 @@ const buildPlacementFields = (body: PlacementFieldsBody): PlacementFields => ({
 /**
  * Sends a Mongoose `ValidationError` as the same 400 shape express-validator produces.
  * Last guard: the schema rejected what express-validator let through.
+ *
+ * @param toBodyPath - Maps a schema path to the matching body path (identity by default)
  */
-const sendMongooseValidationError = (res: Response, err: mongoose.Error.ValidationError) =>
+const sendMongooseValidationError = (
+  res: Response,
+  err: mongoose.Error.ValidationError,
+  toBodyPath: (path: string) => string = (path) => path
+) =>
   res.status(400).json({
     status: 'fail',
     message: 'Invalid input data',
     errors: Object.values(err.errors).map((error) => ({
       type: 'field',
       msg: error.message,
-      path: error.path,
+      path: toBodyPath(error.path),
       location: 'body'
     }))
   });
@@ -364,6 +370,63 @@ export const deleteTransmitter = catchAsync(async (req: RequestWithUser, res: Re
   }
 
   return res.status(204).send();
+});
+
+/**
+ * Replaces one embedded transmitter, by the `placementId` and `transmitterId` path params,
+ * with a body already checked by `updateTransmitterValidation`, keeping its `_id` and
+ * stamping the placement's `lastUpdate` (even when nothing changed).
+ *
+ * Written as one atomic positional update matched by the transmitter's `_id`, not load,
+ * set and save: with `versionKey: false` a saved subdocument change targets its array
+ * index, so a transmitter deleted meanwhile by another request would shift the array and
+ * the save would overwrite the wrong one. Update validators still run the schema on the
+ * new transmitter. When nothing matched, a second query tells a missing placement from a
+ * missing transmitter.
+ *
+ * Responds 200 with the updated transmitter, 400 when validation (express-validator or
+ * Mongoose) fails, or 404 when the placement or the transmitter does not exist.
+ */
+export const updateTransmitter = catchAsync(async (req: RequestWithUser, res: Response) => {
+  const validation = checkValidation(req, res);
+  if (validation !== undefined) {
+    return validation;
+  }
+
+  const placementId = req.params.placementId as string;
+  const transmitterId = req.params.transmitterId as string;
+  // `_id` is set explicitly: replacing the subdocument would otherwise give it a new one
+  const transmitter = {
+    _id: transmitterId,
+    ...buildTransmitter(req.body as TransmitterBody)
+  };
+
+  let matchedCount: number;
+  try {
+    ({ matchedCount } = await PlacementModel.updateOne(
+      { _id: placementId, 'transmitters._id': transmitterId },
+      { $set: { 'transmitters.$': transmitter, lastUpdate: new Date() } },
+      { runValidators: true }
+    ));
+  } catch (err) {
+    if (err instanceof mongoose.Error.ValidationError) {
+      // Update validators report `transmitters.<n>.<field>`; the body path is `<field>`
+      return sendMongooseValidationError(res, err, (path) =>
+        path.replace(/^transmitters\.\d+\./, '')
+      );
+    }
+    throw err;
+  }
+
+  if (matchedCount === 0) {
+    const placementExists = await PlacementModel.exists({ _id: placementId });
+    return placementExists ? sendTransmitterNotFound(res) : sendPlacementNotFound(res);
+  }
+
+  return res.status(200).json({
+    status: 'success',
+    data: { transmitter }
+  });
 });
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>

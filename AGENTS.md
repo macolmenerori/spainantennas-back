@@ -50,7 +50,8 @@ One `placements` collection. Transmitters are **embedded subdocuments with their
 - Nullable fields (`lat`, `lon`, `altM`, `postcode`, `frequencykHz`, `powerKw`) are not required and default to `null`, so every document has every key. Strings are trimmed.
 - Schema options on all three schemas: `versionKey: false` (no `__v`), `strict: 'throw'` (unknown keys fail). An unknown root key throws `StrictModeError` from the constructor; an unknown transmitter key surfaces as a cast `ValidationError`. Import must catch both per item.
 - No Mongoose `timestamps`. Indexes: `status`, `postcode`, `{transmitters.technology, transmitters.type}`. Accent-insensitive text filters are built at query time (accent-class regex), not stored.
-- The lat/lon pair validator runs on document validation (`save`, `validate`, `insertMany`), not on `findOneAndUpdate`. Updates must load, set, then `save()`. `validateSync()` is deprecated in Mongoose 9; use `validate()`.
+- The lat/lon pair validator runs on document validation (`save`, `validate`, `insertMany`), not on `findOneAndUpdate`. Updates must load, set, then `save()`, except PUT transmitter (atomic positional update, see below). `validateSync()` is deprecated in Mongoose 9; use `validate()`.
+- `versionKey: false` means no array versioning: saving a changed transmitter subdocument writes `$set` on `transmitters.<index>.*`, so a concurrent removal shifting the array would hit the wrong transmitter. Removing one with subdoc `deleteOne()` + `save()` is safe (`$pull` by `_id`).
 - `stationName` is NOT unique within a placement (TV repeats channels across multiplexes). Always address a transmitter by its `_id`.
 - `lastUpdate` is stamped by the server (now) on any placement or transmitter create/update/delete; client value ignored. Import keeps the file's `lastUpdate`.
 
@@ -143,7 +144,16 @@ Delete transmitter (`DELETE /transmitter/:placementId/:transmitterId`, `deleteTr
 - Load, remove, save: `findById` -> `transmitters.id()` -> subdoc `deleteOne()` + `lastUpdate = now` -> `save()`. Not an atomic `$pull`, so the 404s differ: `No placement found with that ID` vs `No transmitter found with that ID`.
 - Save errors: `ValidationError` -> 400 (Mongoose shape), `DocumentNotFoundError` (placement deleted meanwhile) -> placement 404.
 - Success: 204, no body. The last transmitter may be deleted (placement keeps `[]`).
-- Other methods -> 405 with `Allow: DELETE`; add `PUT` to that list when the PUT endpoint lands.
+- Other methods -> 405 with `Allow: PUT, DELETE`.
+
+Update transmitter (`PUT /transmitter/:placementId/:transmitterId`, `updateTransmitter`):
+
+- Middleware: `protect` -> `updateTransmitterValidation` (both params `isMongoId` + the root-level `transmitterChains()`, all errors reported together) -> `updateTransmitter`. Query is ignored.
+- Body: full replace, exactly the 7 transmitter fields, same rules as a transmitter in POST /placement (error paths `type`, `stationName`, ...). `_id`, `lastUpdate`, `placementId` or any other key -> 400 `Unknown field(s): ...`; a non-object body -> 400 `Body must be a JSON object`. Nullable fields omitted -> `null`.
+- One atomic `updateOne({ _id: placementId, 'transmitters._id': transmitterId }, { $set: { 'transmitters.$': { _id: transmitterId, ...fields }, lastUpdate: now } }, { runValidators: true })`, not load/set/save (array-index race above). `_id` is passed explicitly, or Mongoose casts a new one. `lastUpdate` is stamped even when nothing changed.
+- Update validators run the transmitter schema on `transmitters.$` and report `transmitters.0.<field>`; the `ValidationError` -> 400 (Mongoose shape) with paths remapped to the body field.
+- `matchedCount === 0` -> `exists({ _id: placementId })`: `No placement found with that ID` or `No transmitter found with that ID` (404).
+- Success: 200 `{ status: "success", data: { transmitter } }` with `_id` and the stored (trimmed, nulls filled) values.
 
 ## Validation
 

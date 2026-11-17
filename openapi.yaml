@@ -695,6 +695,132 @@ paths:
                 status: error
                 message: Internal server error
   /transmitter/{placementId}/{transmitterId}:
+    put:
+      summary: Update a transmitter
+      description: >
+        Replaces every field of one transmitter, keeping its _id, and stamps the
+        placement's lastUpdate. Nullable fields may be omitted (stored as null).
+        Numbers must be JSON numbers. Unknown keys, _id and lastUpdate are
+        rejected. Any query string is ignored.
+      tags:
+        - Transmitter
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: placementId
+          required: true
+          description: Placement MongoDB ObjectId
+          schema:
+            type: string
+            example: 507f1f77bcf86cd799439011
+        - in: path
+          name: transmitterId
+          required: true
+          description: Transmitter MongoDB ObjectId
+          schema:
+            type: string
+            example: 507f1f77bcf86cd799439012
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransmitterInput'
+            example:
+              type: radio
+              technology: FM
+              frequencykHz: 88200
+              stationName: Radio Nacional
+              broadcaster: RTVE
+              powerKw: 10
+              source: Ministry FM list
+      responses:
+        '200':
+          description: Transmitter updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: object
+                    properties:
+                      transmitter:
+                        $ref: '#/components/schemas/Transmitter'
+        '400':
+          description: Invalid placementId or transmitterId, validation error or malformed
+            JSON body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+              example:
+                status: fail
+                message: Invalid input data
+                errors:
+                  - type: field
+                    value: '88.2'
+                    msg: frequencykHz must be a number
+                    path: frequencykHz
+                    location: body
+        '401':
+          description: Missing, malformed or rejected token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: fail
+                message: You are not logged in! Please log in to get access.
+        '404':
+          description: No placement with that placementId, or no transmitter with that
+            transmitterId in it
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                placement:
+                  value:
+                    status: fail
+                    message: No placement found with that ID
+                transmitter:
+                  value:
+                    status: fail
+                    message: No transmitter found with that ID
+        '413':
+          description: Body larger than 1 MB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: fail
+                message: Request body too large
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                message: Internal server error
+        '503':
+          description: Authentication service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                message: Authentication service unavailable
     delete:
       summary: Delete a transmitter
       description: >

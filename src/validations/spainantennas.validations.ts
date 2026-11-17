@@ -104,26 +104,33 @@ const nullableNumber = (
   return range ? chain.bail().custom(range.test).withMessage(range.message) : chain;
 };
 
-const transmitterChains = (prefix: string): ValidationChain[] => [
-  body(prefix)
-    .custom(isPlainObject)
-    .withMessage('Each transmitter must be an object')
-    .bail()
-    .custom(onlyKeys(TRANSMITTER_KEYS)),
-  requiredEnum(`${prefix}.type`, TRANSMITTER_TYPES),
-  requiredEnum(`${prefix}.technology`, TRANSMITTER_TECHNOLOGIES),
-  nullableNumber(`${prefix}.frequencykHz`, {
-    test: (value) => value > 0,
-    message: 'frequencykHz must be greater than 0'
-  }),
-  requiredString(`${prefix}.stationName`, MAX_NAME_LENGTH),
-  requiredString(`${prefix}.broadcaster`, MAX_NAME_LENGTH),
-  nullableNumber(`${prefix}.powerKw`, {
-    test: (value) => value >= 0,
-    message: 'powerKw must be 0 or greater'
-  }),
-  requiredString(`${prefix}.source`, MAX_SOURCE_LENGTH)
-];
+/**
+ * Chains for one transmitter object. With `prefix` (`transmitters.*`) they check each item
+ * of a placement's array; without it, the request body itself is the transmitter.
+ */
+const transmitterChains = (prefix?: string): ValidationChain[] => {
+  const path = (field: string) => (prefix ? `${prefix}.${field}` : field);
+  return [
+    body(prefix)
+      .custom(isPlainObject)
+      .withMessage(prefix ? 'Each transmitter must be an object' : 'Body must be a JSON object')
+      .bail()
+      .custom(onlyKeys(TRANSMITTER_KEYS)),
+    requiredEnum(path('type'), TRANSMITTER_TYPES),
+    requiredEnum(path('technology'), TRANSMITTER_TECHNOLOGIES),
+    nullableNumber(path('frequencykHz'), {
+      test: (value) => value > 0,
+      message: 'frequencykHz must be greater than 0'
+    }),
+    requiredString(path('stationName'), MAX_NAME_LENGTH),
+    requiredString(path('broadcaster'), MAX_NAME_LENGTH),
+    nullableNumber(path('powerKw'), {
+      test: (value) => value >= 0,
+      message: 'powerKw must be 0 or greater'
+    }),
+    requiredString(path('source'), MAX_SOURCE_LENGTH)
+  ];
+};
 
 /**
  * Chains shared by create and update: root shape and every placement field except
@@ -184,6 +191,13 @@ export const placementIdValidation: ValidationChain[] = [
 export const transmitterIdValidation: ValidationChain[] = [
   param('placementId').isMongoId().withMessage('placementId must be a valid MongoDB ObjectId'),
   param('transmitterId').isMongoId().withMessage('transmitterId must be a valid MongoDB ObjectId')
+];
+
+// Full replace of one transmitter: exactly the transmitter fields (no `_id`, no
+// `lastUpdate`). Id and body errors are reported together.
+export const updateTransmitterValidation: ValidationChain[] = [
+  ...transmitterIdValidation,
+  ...transmitterChains()
 ];
 
 // Any `transmitters` key fails, even [] or null: transmitters have their own endpoints.
