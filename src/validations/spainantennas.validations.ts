@@ -181,6 +181,11 @@ export const placementIdValidation: ValidationChain[] = [
   param('id').isMongoId().withMessage('id must be a valid MongoDB ObjectId')
 ];
 
+export const transmitterIdValidation: ValidationChain[] = [
+  param('placementId').isMongoId().withMessage('placementId must be a valid MongoDB ObjectId'),
+  param('transmitterId').isMongoId().withMessage('transmitterId must be a valid MongoDB ObjectId')
+];
+
 // Any `transmitters` key fails, even [] or null: transmitters have their own endpoints.
 // The root `onlyKeys` still allows the key, so it is reported once, with this message.
 export const updatePlacementValidation: ValidationChain[] = [

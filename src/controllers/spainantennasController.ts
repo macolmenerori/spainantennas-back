@@ -133,6 +133,12 @@ const sendPlacementNotFound = (res: Response) =>
     message: 'No placement found with that ID'
   });
 
+const sendTransmitterNotFound = (res: Response) =>
+  res.status(404).json({
+    status: 'fail',
+    message: 'No transmitter found with that ID'
+  });
+
 /**
  * Lists placements, paginated and sorted by `_id`, from a query already checked by
  * `getPlacementsValidation`. Filters are ANDed; transmitter filters must match the same
@@ -310,6 +316,51 @@ export const deletePlacement = catchAsync(async (req: RequestWithUser, res: Resp
   const placement = await PlacementModel.findByIdAndDelete(req.params.id);
   if (!placement) {
     return sendPlacementNotFound(res);
+  }
+
+  return res.status(204).send();
+});
+
+/**
+ * Deletes one embedded transmitter, by the `placementId` and `transmitterId` path params
+ * already checked by `transmitterIdValidation`, and stamps the placement's `lastUpdate`.
+ * The last transmitter may be deleted (the placement keeps an empty array). The placement
+ * is loaded, changed and saved, so a missing placement and a missing transmitter get
+ * different 404s. Any body or query string is ignored.
+ *
+ * Responds 204 with no body, 400 on an invalid id (or when the stored placement fails the
+ * schema on save), or 404 when the placement or the transmitter does not exist.
+ */
+export const deleteTransmitter = catchAsync(async (req: RequestWithUser, res: Response) => {
+  const validation = checkValidation(req, res);
+  if (validation !== undefined) {
+    return validation;
+  }
+
+  const placement = await PlacementModel.findById(req.params.placementId);
+  if (!placement) {
+    return sendPlacementNotFound(res);
+  }
+
+  const transmitter = placement.transmitters.id(req.params.transmitterId as string);
+  if (!transmitter) {
+    return sendTransmitterNotFound(res);
+  }
+
+  transmitter.deleteOne();
+  placement.lastUpdate = new Date();
+
+  try {
+    await placement.save();
+  } catch (err) {
+    if (err instanceof mongoose.Error.ValidationError) {
+      return sendMongooseValidationError(res, err);
+    }
+    // Deleted by another request between findById and save
+    if (err instanceof mongoose.Error.DocumentNotFoundError) {
+      return sendPlacementNotFound(res);
+    }
+    throw err;
   }
 
   return res.status(204).send();

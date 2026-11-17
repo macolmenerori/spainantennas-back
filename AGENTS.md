@@ -137,6 +137,14 @@ Stats (`GET /stats`, `getStats`):
 - Counts **placements** with `countDocuments`, never transmitters. Transmitter filters combine in one `$elemMatch`; a placement counts once however many transmitters match. No filter = every placement. Sites without coordinates are counted, so `totalCount` equals `/placement`'s `total` for the same filters.
 - Response: 200 `{ status: "success", totalCount }` (0 when nothing matches). No caching.
 
+Delete transmitter (`DELETE /transmitter/:placementId/:transmitterId`, `deleteTransmitter`):
+
+- Middleware: `protect` -> `transmitterIdValidation` (both params `isMongoId`, errors reported together) -> `deleteTransmitter`. Body and query are ignored.
+- Load, remove, save: `findById` -> `transmitters.id()` -> subdoc `deleteOne()` + `lastUpdate = now` -> `save()`. Not an atomic `$pull`, so the 404s differ: `No placement found with that ID` vs `No transmitter found with that ID`.
+- Save errors: `ValidationError` -> 400 (Mongoose shape), `DocumentNotFoundError` (placement deleted meanwhile) -> placement 404.
+- Success: 204, no body. The last transmitter may be deleted (placement keeps `[]`).
+- Other methods -> 405 with `Allow: DELETE`; add `PUT` to that list when the PUT endpoint lands.
+
 ## Validation
 
 express-validator chains in `src/validations/` for path params (`isMongoId`), query params, pagination and bodies; controller short-circuits with 400. Mongoose schema is the final guard and validates import items. Controllers build documents explicitly; never forward raw `req.body`.

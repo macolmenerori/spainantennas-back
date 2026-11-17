@@ -4,6 +4,7 @@ import { protect } from '../controllers/authController';
 import {
   createPlacement,
   deletePlacement,
+  deleteTransmitter,
   exportPlacements,
   getPlacements,
   getStats,
@@ -22,6 +23,7 @@ import {
   getTransmittersValidation,
   importPlacementsValidation,
   placementIdValidation,
+  transmitterIdValidation,
   updatePlacementValidation
 } from '../validations/spainantennas.validations';
 
@@ -1127,6 +1129,102 @@ router
   .route('/transmitter')
   .get(getTransmittersValidation, getTransmitters)
   .all(methodNotAllowed(['GET']));
+
+/**
+ * @openapi
+ * /transmitter/{placementId}/{transmitterId}:
+ *   delete:
+ *     summary: Delete a transmitter
+ *     description: >
+ *       Deletes one transmitter from its placement and stamps the placement's lastUpdate.
+ *       The last transmitter may be deleted (the placement keeps an empty list). Any
+ *       request body or query string is ignored.
+ *     tags:
+ *       - Transmitter
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: placementId
+ *         required: true
+ *         description: Placement MongoDB ObjectId
+ *         schema:
+ *           type: string
+ *           example: "507f1f77bcf86cd799439011"
+ *       - in: path
+ *         name: transmitterId
+ *         required: true
+ *         description: Transmitter MongoDB ObjectId
+ *         schema:
+ *           type: string
+ *           example: "507f1f77bcf86cd799439012"
+ *     responses:
+ *       204:
+ *         description: Transmitter deleted (no body)
+ *       400:
+ *         description: Invalid placementId or transmitterId
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationErrorResponse'
+ *             example:
+ *               status: fail
+ *               message: Invalid input data
+ *               errors:
+ *                 - type: field
+ *                   value: abc
+ *                   msg: transmitterId must be a valid MongoDB ObjectId
+ *                   path: transmitterId
+ *                   location: params
+ *       401:
+ *         description: Missing, malformed or rejected token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: fail
+ *               message: You are not logged in! Please log in to get access.
+ *       404:
+ *         description: No placement with that placementId, or no transmitter with that transmitterId in it
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             examples:
+ *               placement:
+ *                 value:
+ *                   status: fail
+ *                   message: No placement found with that ID
+ *               transmitter:
+ *                 value:
+ *                   status: fail
+ *                   message: No transmitter found with that ID
+ *       429:
+ *         $ref: '#/components/responses/TooManyRequests'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: error
+ *               message: Internal server error
+ *       503:
+ *         description: Authentication service unavailable
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               status: error
+ *               message: Authentication service unavailable
+ */
+router
+  .route('/transmitter/:placementId/:transmitterId')
+  .delete(protect, transmitterIdValidation, deleteTransmitter)
+  .all(methodNotAllowed(['DELETE']));
 
 /**
  * @openapi
