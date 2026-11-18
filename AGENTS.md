@@ -175,4 +175,4 @@ Body rules:
 
 - `data/` is gitignored source data; never commit it or edit it from this repo.
 - `description.md` is the original project brief, kept for reference and gitignored. This file is the source of truth when they differ.
-- Git not initialized yet.
+- `docker/` holds the demo stack (`docker compose up --build`: seeded MongoDB, opensesame-back, this API; front to be added when it exists). Its Dockerfiles `git clone` opensesame-back and this repo from GitHub, so the demo runs pushed `master`, not local changes. Seed data lives in `docker/init-mongo.js` (real placements copied from `data/`, transmitters with `new ObjectId()`); keep it valid against the schema when the model changes. `docker/**` is ESLint-ignored (mongosh globals).

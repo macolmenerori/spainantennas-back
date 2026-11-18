@@ -10,7 +10,7 @@ export default defineConfig(
   tseslint.configs.recommended,
 
   {
-    ignores: ['node_modules/**', 'dist/**', 'data/**', 'coverage/**']
+    ignores: ['node_modules/**', 'dist/**', 'data/**', 'coverage/**', 'docker/**']
   },
 
   {

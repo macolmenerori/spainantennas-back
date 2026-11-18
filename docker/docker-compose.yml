@@ -1,0 +1,72 @@
+services:
+  db:
+    build:
+      context: .
+      dockerfile: Dockerfile.mongo
+    container_name: spainantennas-db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    ports:
+      - '27017:27017'
+
+  opensesame-back:
+    build:
+      context: .
+      dockerfile: Dockerfile.opensesame
+      args:
+        DATABASE: mongodb://admindb:admindb@db:27017/opensesame?authSource=admin
+        JWT_SECRET: jc2TNsWyaM3DdKkhurJL8QGzCvX9BfUY
+        CORS_WHITELIST: 'http://spainantennas-back:8083,http://localhost,http://localhost:80,http://localhost:3000'
+    container_name: opensesame-back
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      DB_NAME: opensesame
+      DATABASE: mongodb://admindb:admindb@db:27017/opensesame?authSource=admin
+      PASSWORD_HASH_DIFFICULTY: 12
+      JWT_SECRET: jc2TNsWyaM3DdKkhurJL8QGzCvX9BfUY
+      JWT_EXPIRES_IN: 604800
+      JWT_COOKIE_EXPIRES_IN: 7
+      RATELIMIT_MAXCONNECTIONS: 100
+      RATELIMIT_WINDOWMS: 3600000
+      CORS_WHITELIST: 'http://spainantennas-back:8083,http://localhost,http://localhost:80,http://localhost:3000'
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: on-failure
+    ports:
+      - '8080:8080'
+
+  spainantennas-back:
+    build:
+      context: .
+      dockerfile: Dockerfile.spainantennas-back
+      args:
+        DATABASE: mongodb://admindb:admindb@db:27017/spainantennas?authSource=admin
+        AUTH_URL: http://opensesame-back:8080/api/v1
+        CORS_WHITELIST: 'http://localhost,http://localhost:80,http://localhost:3000'
+    container_name: spainantennas-back
+    environment:
+      NODE_ENV: production
+      PORT: 8083
+      DATABASE: mongodb://admindb:admindb@db:27017/spainantennas?authSource=admin
+      AUTH_URL: http://opensesame-back:8080/api/v1
+      AUTH_TIMEOUT_MS: 10000
+      RATELIMIT_MAXCONNECTIONS: 1000
+      RATELIMIT_WINDOWMS: 900000
+      CORS_WHITELIST: 'http://localhost,http://localhost:80,http://localhost:3000'
+      DEFAULT_PERPAGE: 20
+      MAX_PERPAGE: 100
+      IMPORT_MAX_SIZE_MB: 100
+    depends_on:
+      db:
+        condition: service_healthy
+      opensesame-back:
+        condition: service_started
+    restart: on-failure
+    ports:
+      - '8083:8083'
