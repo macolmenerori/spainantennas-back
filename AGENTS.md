@@ -25,7 +25,7 @@ Express + TypeScript API over MongoDB (Mongoose) serving radio/TV antenna sites 
 - Vitest, no real DB (mock Mongoose models and `fetch`). Unit tests call handlers with fake req/res; `src/app.test.ts` drives the real `app` in-process with supertest (middleware, wiring), stubbing env then `vi.resetModules()` + dynamic `import('./app')` because `app.ts` reads env when it loads. `vitest.config.mts` (`.mts` because the package is CJS) restores mocks, stubbed globals and envs after each test. In tests that import Express's `Response` type, build fetch responses with `new globalThis.Response(...)`. `src/app.test.ts` mocks `protect` to let requests through; set `auth.deny = true` to make it answer 401. Export controller tests use a `Writable` fake response (`FakeExportResponse`) and a fake cursor (`next`/`close`); `app.test.ts` gives `lean()` a `cursor()` too. Import tests live in `spainantennasController.import.test.ts`: they use the real model (construction and `validate()` need no connection) and spy only on `insertMany`. The schema default `Date.now` is captured at load, so fake timers don't reach it.
 - swagger-jsdoc: `@openapi` JSDoc in `src/routes/*.ts`, generated to an OpenAPI file by `scripts/generateOpenapi.ts`.
 
-## Commands (rainlogger style; missing ones still to create)
+## Commands (rainlogger style)
 
 - `pnpm dev` (`nodemon --exec tsx src/server.ts`; tsx, not ts-node, also runs TS scripts), `pnpm build` (tsc), `pnpm start` (`node dist/server.js`)
 - `pnpm lint` (`eslint --fix .`), `pnpm prettify` (`prettier -w .`, whole repo; `.prettierignore` excludes `data/`, `dist/`, lockfile, `description.md`), `pnpm types` (`tsc --noEmit`)
@@ -33,6 +33,7 @@ Express + TypeScript API over MongoDB (Mongoose) serving radio/TV antenna sites 
 - `pnpm test` (vitest run), single test: `pnpm vitest run path/to/file.test.ts -t "name"`
 - `pnpm verify`: audit -> lint -> prettify -> types -> test -> build
 - `pnpm generate:openapi` (`tsx scripts/generateOpenapi.ts`)
+- `pnpm release <patch|minor|major>` (`tsx scripts/release.ts`): verify -> bump package.json (`pnpm version --no-git-tag-version`, no commit or tag) -> regenerate `openapi.yaml` (its `info.version` comes from package.json). Needs a clean working tree: pnpm's guard runs after verify, so it also stops the release if lint/prettify changed a file. Then commit, open the PR, and create the GitHub Release (tag `X.Y.Z`, no `v` prefix) from master.
 
 ## Structure
 
