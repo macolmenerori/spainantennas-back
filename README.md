@@ -59,7 +59,7 @@ docker network create opensesame-network
 docker run --network opensesame-network -p 8080:8080 --name opensesame-back opensesame-back
 ```
 
-2. Set up and configure this project
+1. Set up and configure this project
 
 ```bash
 # Build the image
@@ -93,6 +93,20 @@ The server starts on the port defined in `config.env` (default `8083`). A health
 ## Configuration
 
 ## Available scripts
+
+| Script                               | What it does                                                                                         |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `pnpm dev`                           | Starts the app with nodemon and tsx (hot-reload)                                                     |
+| `pnpm build`                         | Compiles `src/` → `dist/` via `tsc`                                                                  |
+| `pnpm start`                         | Runs the compiled app (`node dist/server.js`)                                                        |
+| `pnpm lint`                          | Runs ESLint with auto-fix (includes Prettier formatting)                                             |
+| `pnpm prettify`                      | Formats the whole repo with Prettier                                                                 |
+| `pnpm types`                         | Type-checks without emitting (`tsc --noEmit`)                                                        |
+| `pnpm test`                          | Runs the Vitest suite once                                                                           |
+| `pnpm verify`                        | Runs audit, lint, prettify, types, test and build in sequence                                        |
+| `pnpm generate:openapi`              | Generates `openapi.yaml` from the `@openapi` JSDoc in `src/routes/`                                  |
+| `pnpm generate:openapi:json`         | Same, but writes `openapi.json`                                                                      |
+| `pnpm release <patch\|minor\|major>` | Runs `verify`, bumps the version in `package.json` (no commit or tag) and regenerates `openapi.yaml` |
 
 ## API Overview
 

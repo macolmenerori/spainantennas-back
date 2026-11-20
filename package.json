@@ -23,7 +23,8 @@
     "test": "vitest run",
     "verify": "pnpm audit --prod && pnpm lint && pnpm prettify && pnpm types && pnpm test && pnpm build",
     "generate:openapi": "tsx scripts/generateOpenapi.ts",
-    "generate:openapi:json": "tsx scripts/generateOpenapi.ts --json"
+    "generate:openapi:json": "tsx scripts/generateOpenapi.ts --json",
+    "release": "tsx scripts/release.ts"
   },
   "devEngines": {
     "packageManager": {
