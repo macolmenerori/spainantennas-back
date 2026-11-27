@@ -45,7 +45,7 @@
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.73.0",
-    "vitest": "^5.1.1"
+    "vitest": "^5.1.2"
   },
   "dependencies": {
     "@exortek/express-mongo-sanitize": "^4.0.0",
